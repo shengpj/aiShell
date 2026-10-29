@@ -1,0 +1,476 @@
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  listFiles,
+  previewFile,
+  type FileEntry,
+  type FileListing,
+  type FilePreview,
+  type FileType,
+} from "../api/files";
+
+function message(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function formatTime(seconds: number): string {
+  if (!seconds || seconds <= 0) {
+    return "—";
+  }
+  const date = new Date(seconds * 1000);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+}
+
+function typeLabel(type: FileType): string {
+  return type === "dir" ? "目录" : type === "link" ? "链接" : "文件";
+}
+
+function parentPath(path: string): string {
+  if (path === "/" || !path) {
+    return "/";
+  }
+  const cut = path.lastIndexOf("/");
+  return cut <= 0 ? "/" : path.slice(0, cut);
+}
+
+function pathChain(path: string): string[] {
+  const parts = path.split("/").filter(Boolean);
+  const chain = ["/"];
+  let current = "";
+  for (const part of parts) {
+    current = `${current}/${part}`;
+    chain.push(current);
+  }
+  return chain;
+}
+
+interface TreeRowProps {
+  path: string;
+  depth: number;
+  expanded: boolean;
+  current: boolean;
+  onToggle: (path: string) => void;
+}
+
+function TreeRow({ path, depth, expanded, current, onToggle }: TreeRowProps) {
+  const name = path === "/" ? "/" : path.slice(path.lastIndexOf("/") + 1);
+  return (
+    <button
+      className={`tree-row${current ? " tree-selected" : ""}`}
+      type="button"
+      style={{ paddingLeft: 6 + depth * 12 }}
+      title={path}
+      aria-expanded={expanded}
+      onClick={() => onToggle(path)}
+    >
+      <span className="tree-caret">{expanded ? "▾" : "▸"}</span>
+      <span className="tree-name tree-dir">{name}</span>
+    </button>
+  );
+}
+
+export default function FileTreePane({ sessionId }: { sessionId: string | null }) {
+  const [cwd, setCwd] = useState("/");
+  const [listing, setListing] = useState<FileListing | null>(null);
+  const [treeDirs, setTreeDirs] = useState<Record<string, FileEntry[]>>({});
+  const [expanded, setExpanded] = useState<string[]>(["/"]);
+  const [loadingDirs, setLoadingDirs] = useState<string[]>([]);
+  const [loadingCwd, setLoadingCwd] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [preview, setPreview] = useState<FilePreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const sessionRef = useRef(sessionId);
+  sessionRef.current = sessionId;
+  const listingRequest = useRef(0);
+  const previewRequest = useRef(0);
+  const treeRef = useRef<Record<string, FileEntry[]>>({});
+  const treeLoading = useRef<Set<string>>(new Set());
+
+  const cacheTreeDir = (path: string, entries: FileEntry[]) => {
+    treeRef.current = {
+      ...treeRef.current,
+      [path]: entries.filter((entry) => entry.type === "dir"),
+    };
+    setTreeDirs(treeRef.current);
+  };
+
+  const loadTreeDir = async (session: string, path: string) => {
+    if (treeRef.current[path] || treeLoading.current.has(path)) {
+      return;
+    }
+    treeLoading.current.add(path);
+    setLoadingDirs((current) => [...current, path]);
+    try {
+      const result = await listFiles(session, path);
+      if (sessionRef.current === session) {
+        cacheTreeDir(path, result.entries);
+      }
+    } catch (cause) {
+      if (sessionRef.current === session) {
+        setError(message(cause));
+      }
+    } finally {
+      treeLoading.current.delete(path);
+      if (sessionRef.current === session) {
+        setLoadingDirs((current) => current.filter((item) => item !== path));
+      }
+    }
+  };
+
+  const reveal = async (session: string, path: string) => {
+    const chain = pathChain(path);
+    setExpanded((current) => Array.from(new Set([...current, ...chain])));
+    for (const dir of chain.slice(0, -1)) {
+      if (sessionRef.current !== session) {
+        return;
+      }
+      await loadTreeDir(session, dir);
+    }
+  };
+
+  const loadDir = async (session: string, path: string) => {
+    const token = ++listingRequest.current;
+    setLoadingCwd(true);
+    setError(null);
+    try {
+      const result = await listFiles(session, path);
+      if (listingRequest.current !== token || sessionRef.current !== session) {
+        return;
+      }
+      setListing(result);
+      setNotice(result.truncated ? `目录条目过多，仅显示前 ${result.entries.length} 项。` : null);
+      cacheTreeDir(path, result.entries);
+    } catch (cause) {
+      if (listingRequest.current === token && sessionRef.current === session) {
+        setError(message(cause));
+      }
+    } finally {
+      if (listingRequest.current === token && sessionRef.current === session) {
+        setLoadingCwd(false);
+      }
+    }
+  };
+
+  const navigate = (path: string) => {
+    if (!sessionId) {
+      return;
+    }
+    setCwd(path);
+    previewRequest.current++;
+    setPreviewPath(null);
+    setPreview(null);
+    setPreviewError(null);
+    void loadDir(sessionId, path);
+    void reveal(sessionId, path);
+  };
+
+  useEffect(() => {
+    listingRequest.current++;
+    previewRequest.current++;
+    treeRef.current = {};
+    treeLoading.current.clear();
+    setCwd("/");
+    setListing(null);
+    setTreeDirs({});
+    setExpanded(["/"]);
+    setLoadingDirs([]);
+    setLoadingCwd(false);
+    setError(null);
+    setNotice(null);
+    setPreviewPath(null);
+    setPreview(null);
+    setPreviewError(null);
+    if (!sessionId) {
+      return;
+    }
+    void loadDir(sessionId, "/");
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!previewPath) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPreviewPath(null);
+        setPreview(null);
+        setPreviewError(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewPath]);
+
+  const toggleTreeDir = (path: string) => {
+    if (expanded.includes(path)) {
+      setExpanded((current) => current.filter((item) => item !== path));
+      return;
+    }
+    setExpanded((current) => [...current, path]);
+    if (sessionId) {
+      void loadTreeDir(sessionId, path);
+    }
+  };
+
+  const refresh = () => {
+    if (!sessionId) {
+      return;
+    }
+    treeRef.current = {};
+    treeLoading.current.clear();
+    setTreeDirs({});
+    setExpanded(["/"]);
+    setLoadingDirs([]);
+    setError(null);
+    void loadDir(sessionId, cwd);
+    void reveal(sessionId, cwd);
+  };
+
+  const openPreview = async (entry: FileEntry) => {
+    if (!sessionId) {
+      return;
+    }
+    const token = ++previewRequest.current;
+    setPreviewPath(entry.path);
+    setPreview(null);
+    setPreviewError(null);
+    try {
+      const result = await previewFile(sessionId, entry.path);
+      if (previewRequest.current === token && sessionRef.current === sessionId) {
+        setPreview(result);
+      }
+    } catch (cause) {
+      if (previewRequest.current === token) {
+        setPreviewError(message(cause));
+      }
+    }
+  };
+
+  const closePreview = () => {
+    previewRequest.current++;
+    setPreviewPath(null);
+    setPreview(null);
+    setPreviewError(null);
+  };
+
+  const treeRows: ReactNode[] = [];
+  const walkTree = (path: string, depth: number) => {
+    for (const dir of treeDirs[path] ?? []) {
+      const isExpanded = expanded.includes(dir.path);
+      treeRows.push(
+        <TreeRow
+          key={dir.path}
+          path={dir.path}
+          depth={depth}
+          expanded={isExpanded}
+          current={dir.path === cwd}
+          onToggle={toggleTreeDir}
+        />,
+      );
+      if (!isExpanded) {
+        continue;
+      }
+      if (treeDirs[dir.path]) {
+        walkTree(dir.path, depth + 1);
+      } else if (loadingDirs.includes(dir.path)) {
+        treeRows.push(
+          <p
+            className="tree-loading"
+            key={`loading:${dir.path}`}
+            style={{ paddingLeft: 6 + (depth + 1) * 12 }}
+          >
+            加载中…
+          </p>,
+        );
+      }
+    }
+  };
+  walkTree("/", 1);
+
+  const crumbs = pathChain(cwd);
+  const entries = listing?.entries ?? [];
+
+  return (
+    <section className="pane filetree">
+      <div className="pane-header">
+        <span>文件</span>
+        <span
+          className="filetree-readonly"
+          title="只读：不提供上传、下载、删除或在线编辑，避免绕过审计的写路径"
+        >
+          只读
+        </span>
+        <button
+          className="icon-button"
+          type="button"
+          title="刷新目录"
+          onClick={refresh}
+          disabled={!sessionId}
+        >
+          ⟳
+        </button>
+      </div>
+      <div className="filetree-body">
+        {!sessionId ? (
+          <p className="empty-hint filetree-alone">连接终端后显示远程目录。</p>
+        ) : (
+          <>
+            <div className="filetree-tree">
+              <TreeRow
+                path="/"
+                depth={0}
+                expanded={expanded.includes("/")}
+                current={cwd === "/"}
+                onToggle={toggleTreeDir}
+              />
+              <div className="tree">{treeRows}</div>
+              {loadingDirs.includes("/") && <p className="tree-loading">加载中…</p>}
+            </div>
+            <div className="file-main">
+              <div className="file-toolbar">
+                <button
+                  className="mini"
+                  type="button"
+                  title="上一级"
+                  onClick={() => navigate(parentPath(cwd))}
+                  disabled={cwd === "/"}
+                >
+                  ↑
+                </button>
+                <div className="file-crumbs" title={cwd}>
+                  <button
+                    className="crumb"
+                    type="button"
+                    onClick={() => navigate("/")}
+                    disabled={cwd === "/"}
+                  >
+                    /
+                  </button>
+                  {crumbs.slice(1).map((path, index) => (
+                    <Fragment key={path}>
+                      {index > 0 && <span className="crumb-sep">/</span>}
+                      <button
+                        className="crumb"
+                        type="button"
+                        onClick={() => navigate(path)}
+                        disabled={path === cwd}
+                      >
+                        {path.slice(path.lastIndexOf("/") + 1)}
+                      </button>
+                    </Fragment>
+                  ))}
+                </div>
+                {notice && <span className="file-notice">{notice}</span>}
+              </div>
+              {error && <p className="conn-error file-error">{error}</p>}
+              <div className="file-table-wrap">
+                <table className="file-table">
+                  <colgroup>
+                    <col />
+                    <col className="col-size" />
+                    <col className="col-type" />
+                    <col className="col-time" />
+                    <col className="col-perms" />
+                    <col className="col-owner" />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th className="num">大小</th>
+                      <th>类型</th>
+                      <th>修改时间</th>
+                      <th>权限</th>
+                      <th>用户/用户组</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entries.map((entry) => (
+                      <tr key={entry.path} className={entry.type === "dir" ? "file-row-dir" : ""}>
+                        <td className="file-name-cell">
+                          <button
+                            className={`file-name file-${entry.type}`}
+                            type="button"
+                            title={entry.path}
+                            onClick={() =>
+                              entry.type === "dir" ? navigate(entry.path) : void openPreview(entry)
+                            }
+                          >
+                            {entry.type === "dir" ? "▸ " : ""}
+                            {entry.name}
+                          </button>
+                        </td>
+                        <td className="num">{entry.type === "dir" ? "—" : formatSize(entry.size)}</td>
+                        <td>{typeLabel(entry.type)}</td>
+                        <td className="file-mtime">{formatTime(entry.modifiedAt)}</td>
+                        <td className="file-perms" title={`权限 ${entry.permissions}`}>
+                          {entry.permissions || "—"}
+                        </td>
+                        <td className="file-owner" title={`${entry.owner}/${entry.group}`}>
+                          {entry.owner}/{entry.group}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {!listing && !error && <p className="empty-hint file-empty">读取目录…</p>}
+                {listing && entries.length === 0 && <p className="empty-hint file-empty">空目录</p>}
+                {loadingCwd && listing && <p className="empty-hint file-empty">读取目录…</p>}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {previewPath && (
+        <div className="file-preview">
+          <div className="file-preview-head">
+            <span className="file-preview-path" title={previewPath}>
+              {previewPath}
+            </span>
+            {preview && <span className="file-preview-meta">{formatSize(preview.size)}</span>}
+            <button className="ghost-button" type="button" onClick={closePreview}>
+              关闭
+            </button>
+          </div>
+          <div className="file-preview-body">
+            {previewError && <p className="conn-error">{previewError}</p>}
+            {!preview && !previewError && <p className="empty-hint">读取文件…</p>}
+            {preview?.kind === "text" && <pre className="preview-text">{preview.text}</pre>}
+            {preview?.kind === "image" && preview.data && (
+              <img
+                className="preview-image"
+                src={`data:${preview.mime};base64,${preview.data}`}
+                alt={preview.path}
+              />
+            )}
+            {preview?.kind === "binary" && (
+              <p className="empty-hint">二进制文件，暂不支持预览。</p>
+            )}
+            {preview?.kind === "too-large" && (
+              <p className="empty-hint">文件过大（{formatSize(preview.size)}），超出预览上限。</p>
+            )}
+          </div>
+          {preview?.truncated && <p className="file-preview-hint">仅显示文件前 256 KB。</p>}
+        </div>
+      )}
+    </section>
+  );
+}

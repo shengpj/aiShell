@@ -1,0 +1,29 @@
+# 依赖与构建产物
+node_modules/
+dist/
+release/
+backend/target/
+src-tauri/target/
+src-tauri/gen/
+
+# 本地数据与日志
+*.log
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+audit.jsonl*
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

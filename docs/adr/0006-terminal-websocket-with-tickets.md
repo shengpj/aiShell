@@ -1,0 +1,7 @@
+# 终端走 WebSocket 直连，令牌用一次性 ticket 过渡
+
+终端数据通道由 webview 直接连 sidecar 的 WebSocket（`/ws/terminal`），不做 Rust 中转；长期 bearer 令牌仍然只留在 Rust 里。webview 每次连接前通过 Tauri 命令让 Rust 用令牌向 `POST /api/tickets` 换一张 ticket（30 秒过期、单次使用、绑定用途），WS 握手时放在查询串里，握手成功后立即作废。**Why**：浏览器/WebView 的 WebSocket 与 EventSource 都无法设置 `Authorization` 头，若前端持有长期令牌，它就会进入 webview 内存、崩溃报告与任何未来的注入面；ticket 泄漏的影响面只有一次握手。终端本身是双向、字节流、全屏 TUI 需要平滑重绘，WebSocket 的二进制帧和事件驱动是唯一自然选择，50ms 增量拉取会卡在 20fps 并持续唤醒 CPU。**后果**：新增数据通道时都要先申请 ticket（聊天 SSE 走请求头，同样用 ticket）；WS 的对端必须是本地回环，服务端校验 Origin 限制为应用自身来源；S2 里 WS 断开即终止对应 SSH 会话，断线续传/回放缓冲留到确有需要时再加。
+
+协议约定：二进制帧一律是 PTY 原始字节（双向），文本帧是 JSON 控制消息——客户端发 `{"type":"open","host","port","user","cols","rows"}`、`{"type":"resize","cols","rows"}`；服务端发 `{"type":"opened"}`、`{"type":"error","message"}`、`{"type":"closed","reason"}`。密码与首次主机指纹确认都在终端内完成（Q26/Q21）：JSch 以 `StrictHostKeyChecking=ask` + known_hosts 文件做 TOFU，提示文本由后端写入终端字节流，密码不回显，主机确认回显。known_hosts 放在 `ai-shell.data.dir`（Rust 通过 `AI_SHELL_DATA_DIR` 传入应用数据目录）下。
+
+**S2 验证状态**：`TerminalWebSocketTest` 用 Apache MINA SSHD（test scope）在进程内起 SSH 服务，覆盖无 ticket 拒绝、ticket 不可复用、缺参报错、完整 TOFU + 密码 + shell 回环（8 个后端测试全绿）。UI 路径在真实 Chrome（Playwright + 仅测试用的 `__TAURI_INTERNALS__.invoke` 桩）下跑通：换 ticket、握手、open 帧、指纹提示与 `yes` 回显、密码不回显、`opened` + banner、命令输出、按钮切到“断开”。当时的 Windows 原生窗口点击自动化未成功（窗口失焦/中途正常退出），后来在打包版上用 UIA + `SendInput` 补验：真实点击输入框、键入地址/用户/私钥路径、点“连接”、在 host-key 提示里键入 `yes`，随后 `opened`、shell 提示符与终端交互均正常，见 ADR 0013。注意测试夹具的 MINA 进程 shell 走管道而非 PTY，`\r` 不会自动转 `\n`，测试里用 CRLF；真实 PTY 服务器会做 icrnl，前端只需发 `\r`。

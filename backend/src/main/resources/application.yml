@@ -1,0 +1,51 @@
+server:
+  address: 127.0.0.1
+  port: 8080
+
+spring:
+  application:
+    name: ai-shell-backend
+  main:
+    banner-mode: off
+  ai:
+    openai:
+      api-key: ${DEEPSEEK_API_KEY:missing-key}
+      base-url: ${DEEPSEEK_BASE_URL:https://sub.vcnovb.cn}
+      chat:
+        options:
+          model: ${DEEPSEEK_MODEL:deepseek-v4.1-flash}
+          temperature: 0.2
+
+adk:
+  spring-ai:
+    model: ${DEEPSEEK_MODEL:deepseek-v4.1-flash}
+    temperature: 0.2
+
+ai-shell:
+  token: ${AI_SHELL_TOKEN:}
+  master-key: ${AI_SHELL_MASTER_KEY:}
+  data:
+    dir: ${AI_SHELL_DATA_DIR:${user.home}/.aishell}
+  ticket:
+    ttl-seconds: 30
+  ai:
+    command-timeout-seconds: 120
+    turn-timeout-seconds: 300
+    deny-patterns:
+      - '\brm\s+(-\S+\s+)*/(\s|$)'
+      - '\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(-\S+\s+)*(/|~|\$HOME|\*)(\s|$)'
+      - '\bmkfs(\.\w+)?\b'
+      - '\bdd\b[^\n]*\bof\s*=\s*/dev/'
+      - '(^|[;&|]\s*|\bsudo\s+)(shutdown|reboot|halt|poweroff)\b'
+      - ':\(\)\s*\{.*\}\s*;\s*:'
+      - '\bchmod\s+(-[a-zA-Z]+\s+)*777\s+/(\s|$)'
+      - '\b(chmod|chown)\s+(-[a-zA-Z]+\s+)*\S+\s+/(\s|$)'
+      - '>\s*/dev/(sd|nvme|hd|vd|xvd)[a-z]'
+      - '\biptables\s+(-F|--flush)\b'
+      - '\buserdel\s+(-[a-zA-Z]+\s+)*root\b'
+  cors:
+    allowed-origins: ${AI_SHELL_CORS_ORIGINS:http://localhost:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost}
+
+logging:
+  level:
+    com.aishell: INFO
