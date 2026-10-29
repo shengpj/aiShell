@@ -595,9 +595,6 @@ function ChatTurn({
           </div>
         </div>
       )}
-      {group.items.length > 0 && (
-        <div className="turn-items">{group.items.map(renderEntry)}</div>
-      )}
       {selected && (
         <div className="turn-delete-bar">
           <span>已选中这一轮对话，删除后不会再发送给大模型。</span>
@@ -610,6 +607,9 @@ function ChatTurn({
             </button>
           </div>
         </div>
+      )}
+      {group.items.length > 0 && (
+        <div className="turn-items">{group.items.map(renderEntry)}</div>
       )}
     </div>
   );
