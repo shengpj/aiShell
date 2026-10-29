@@ -8,6 +8,7 @@ import com.google.adk.sessions.Session;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -117,6 +118,66 @@ class SqliteAgentSessionServiceTest {
     assertThat(service.getSession(APP, USER, "host:22", Optional.empty()).blockingGet())
         .isNull();
     assertThat(service.listEvents(APP, USER, "host:22").blockingGet().events()).isEmpty();
+  }
+
+  @Test
+  void deleteEventsBetweenRemovesOnlyTheRequestedRange() throws Exception {
+    SqliteAgentSessionService service = service();
+    service.createSession(APP, USER, new ConcurrentHashMap<>(), "host:22").blockingGet();
+    Session session =
+        service.getSession(APP, USER, "host:22", Optional.empty()).blockingGet();
+    service.appendEvent(session, event("e1", "user", "one", 1)).blockingGet();
+    Thread.sleep(5);
+    Instant start = Instant.now();
+    Thread.sleep(5);
+    service.appendEvent(session, event("e2", "ops_assistant", "two", 2)).blockingGet();
+
+    assertThat(service.deleteEventsBetween("host:22", start, null)).isEqualTo(1);
+
+    assertThat(service.listEvents(APP, USER, "host:22").blockingGet().events())
+        .extracting(Event::id)
+        .containsExactly("e1");
+  }
+
+  @Test
+  void deleteEventsBetweenStopsAtTheEndInstant() throws Exception {
+    SqliteAgentSessionService service = service();
+    service.createSession(APP, USER, new ConcurrentHashMap<>(), "host:22").blockingGet();
+    Session session =
+        service.getSession(APP, USER, "host:22", Optional.empty()).blockingGet();
+    service.appendEvent(session, event("e1", "user", "one", 1)).blockingGet();
+    Thread.sleep(5);
+    Instant start = Instant.now();
+    Thread.sleep(5);
+    service.appendEvent(session, event("e2", "ops_assistant", "two", 2)).blockingGet();
+    Thread.sleep(5);
+    Instant end = Instant.now();
+    Thread.sleep(5);
+    service.appendEvent(session, event("e3", "user", "three", 3)).blockingGet();
+
+    assertThat(service.deleteEventsBetween("host:22", start, end)).isEqualTo(1);
+
+    assertThat(service.listEvents(APP, USER, "host:22").blockingGet().events())
+        .extracting(Event::id)
+        .containsExactly("e1", "e3");
+  }
+
+  @Test
+  void deleteEventsBetweenIgnoresOtherSessions() throws Exception {
+    SqliteAgentSessionService service = service();
+    service.createSession(APP, USER, new ConcurrentHashMap<>(), "a:22").blockingGet();
+    service.createSession(APP, USER, new ConcurrentHashMap<>(), "b:22").blockingGet();
+    Session a = service.getSession(APP, USER, "a:22", Optional.empty()).blockingGet();
+    Session b = service.getSession(APP, USER, "b:22", Optional.empty()).blockingGet();
+    service.appendEvent(a, event("e1", "user", "one", 1)).blockingGet();
+    service.appendEvent(b, event("e2", "user", "two", 2)).blockingGet();
+
+    assertThat(service.deleteEventsBetween("a:22", Instant.EPOCH, null)).isEqualTo(1);
+
+    assertThat(service.listEvents(APP, USER, "a:22").blockingGet().events()).isEmpty();
+    assertThat(service.listEvents(APP, USER, "b:22").blockingGet().events())
+        .extracting(Event::id)
+        .containsExactly("e2");
   }
 
   private static Event event(String id, String author, String text, long timestamp) {

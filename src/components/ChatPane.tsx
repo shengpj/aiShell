@@ -2,6 +2,7 @@ import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { getBackendInfo, getBackendTicket, isTauri } from "../api/backend";
 import {
+  deleteChatTurn,
   loadChatHistory,
   resetConversation,
   type ChatHistoryEntry,
@@ -43,9 +44,9 @@ interface CommandEvent {
 }
 
 type Entry =
-  | { id: number; kind: "user"; text: string }
-  | { id: number; kind: "ai"; text: string }
-  | { id: number; kind: "error"; text: string }
+  | { id: number; kind: "user"; text: string; turn: string; at?: string }
+  | { id: number; kind: "ai"; text: string; turn: string; at?: string }
+  | { id: number; kind: "error"; text: string; turn: string; at?: string }
   | {
       id: number;
       kind: "command";
@@ -56,7 +57,17 @@ type Entry =
       durationMs?: number;
       note?: string;
       timeoutSeconds?: number;
+      turn: string;
+      at?: string;
     };
+
+type UserEntry = Extract<Entry, { kind: "user" }>;
+
+interface TurnGroup {
+  turn: string;
+  user: UserEntry | null;
+  items: Entry[];
+}
 
 export default function ChatPane({ sessionId }: ChatPaneProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -64,16 +75,28 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
   const [busy, setBusy] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [selectedTurn, setSelectedTurn] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [copiedTurn, setCopiedTurn] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const nextId = useRef(1);
+  const currentTurn = useRef<string | null>(null);
+  const copyTimer = useRef<number | null>(null);
 
   useEffect(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    currentTurn.current = null;
     setEntries([]);
     setNotice(null);
     setBusy(false);
+    setSelectedTurn(null);
+    setCopiedTurn(null);
+    if (copyTimer.current !== null) {
+      window.clearTimeout(copyTimer.current);
+      copyTimer.current = null;
+    }
     if (!sessionId) {
       setHistoryLoading(false);
       return;
@@ -133,12 +156,13 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
   }, [entries]);
 
   const appendAiText = (text: string) => {
+    const turn = currentTurn.current ?? "";
     setEntries((current) => {
       const last = current[current.length - 1];
-      if (last?.kind === "ai") {
+      if (last?.kind === "ai" && last.turn === turn) {
         return [...current.slice(0, -1), { ...last, text: last.text + text }];
       }
-      return [...current, { id: nextId.current++, kind: "ai", text }];
+      return [...current, { id: nextId.current++, kind: "ai", text, turn }];
     });
   };
 
@@ -146,6 +170,7 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
     if (!event.command) {
       return;
     }
+    const turn = currentTurn.current ?? "";
     if (event.state === "started") {
       setEntries((current) => [
         ...current,
@@ -155,6 +180,7 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
           command: event.command,
           state: "started",
           timeoutSeconds: event.timeoutSeconds,
+          turn,
         },
       ]);
       return;
@@ -168,6 +194,7 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
           command: event.command,
           state: "refused",
           note: event.reason,
+          turn,
         },
       ]);
       return;
@@ -203,6 +230,7 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
           exitCode: event.exitCode,
           durationMs: event.durationMs,
           note: event.message,
+          turn,
         },
       ];
     });
@@ -220,9 +248,10 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
     } else if (event === "command") {
       applyCommand(payload as unknown as CommandEvent);
     } else if (event === "error" && typeof payload.message === "string") {
+      const turn = currentTurn.current ?? "";
       setEntries((current) => [
         ...current,
-        { id: nextId.current++, kind: "error", text: payload.message as string },
+        { id: nextId.current++, kind: "error", text: payload.message as string, turn },
       ]);
     } else if (event === "done") {
       setBusy(false);
@@ -234,12 +263,21 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
     if (!message || busy || !sessionId) {
       return;
     }
+    const turn = newTurnId();
+    currentTurn.current = turn;
     setDraft("");
     setNotice(null);
     setBusy(true);
+    setSelectedTurn(null);
     setEntries((current) => [
       ...current,
-      { id: nextId.current++, kind: "user", text: message },
+      {
+        id: nextId.current++,
+        kind: "user",
+        text: message,
+        turn,
+        at: new Date().toISOString(),
+      },
     ]);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -256,7 +294,7 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
           "Content-Type": "application/json",
           "X-AI-Shell-Ticket": ticket,
         },
-        body: JSON.stringify({ session: sessionId, message }),
+        body: JSON.stringify({ session: sessionId, message, turn }),
       });
       if (!response.ok || !response.body) {
         throw new Error(await errorMessage(response));
@@ -267,7 +305,7 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
         const text = cause instanceof Error ? cause.message : String(cause);
         setEntries((current) => [
           ...current,
-          { id: nextId.current++, kind: "error", text },
+          { id: nextId.current++, kind: "error", text, turn },
         ]);
       }
     } finally {
@@ -275,6 +313,49 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
         abortRef.current = null;
       }
       setBusy(false);
+    }
+  };
+
+  useEffect(
+    () => () => {
+      if (copyTimer.current !== null) {
+        window.clearTimeout(copyTimer.current);
+      }
+    },
+    [],
+  );
+
+  const copyMessage = async (entry: UserEntry) => {
+    try {
+      await writeClipboard(entry.text);
+      setCopiedTurn(entry.turn);
+      if (copyTimer.current !== null) {
+        window.clearTimeout(copyTimer.current);
+      }
+      copyTimer.current = window.setTimeout(() => {
+        copyTimer.current = null;
+        setCopiedTurn(null);
+      }, 1600);
+    } catch (cause) {
+      setNotice(`复制失败：${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  };
+
+  const removeSelectedTurn = async () => {
+    if (!sessionId || !selectedTurn || deleting) {
+      return;
+    }
+    setDeleting(true);
+    setNotice(null);
+    try {
+      const result = await deleteChatTurn(sessionId, selectedTurn);
+      setEntries((current) => current.filter((entry) => entry.turn !== selectedTurn));
+      setSelectedTurn(null);
+      setNotice(`已删除 ${result.messages} 条消息，后续对话不再包含这段内容`);
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -311,6 +392,9 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
       const conversation = await resetConversation(sessionId);
       setEntries([]);
       nextId.current = 1;
+      currentTurn.current = null;
+      setSelectedTurn(null);
+      setCopiedTurn(null);
       setNotice(
         conversation ? `已开始新对话（${conversation}），旧对话仍保留在数据库中` : "已开始新对话",
       );
@@ -325,6 +409,8 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
       void send();
     }
   };
+
+  const turns = groupTurns(entries);
 
   return (
     <aside className="pane chat">
@@ -353,8 +439,30 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
               : "连接终端后，可以让我检查状态或执行运维命令。命令会自动执行，危险命令会被拦截。"}
           </div>
         )}
-        {entries.map((entry) => renderEntry(entry))}
-        {busy && <div className="chat-thinking">AI 正在处理…</div>}
+        {turns.map((group) => (
+          <ChatTurn
+            key={group.turn || `orphan-${group.items[0]?.id ?? 0}`}
+            group={group}
+            selected={group.turn !== "" && selectedTurn === group.turn}
+            copied={group.turn !== "" && copiedTurn === group.turn}
+            busy={busy}
+            deleting={deleting}
+            onCopy={copyMessage}
+            onSelect={setSelectedTurn}
+            onDelete={() => void removeSelectedTurn()}
+            onCancel={() => setSelectedTurn(null)}
+          />
+        ))}
+        {busy && (
+          <div className="chat-thinking" role="status">
+            <span className="thinking-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+            {livePhase(entries)}
+          </div>
+        )}
       </div>
       {notice && <div className="terminal-message">{notice}</div>}
       <div className="chat-input">
@@ -391,9 +499,12 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
 }
 
 function toEntry(entry: ChatHistoryEntry): Entry {
+  const turn = entry.turn ?? "";
   if (entry.kind === "command") {
     return {
       id: entry.id,
+      turn,
+      at: entry.at,
       kind: "command",
       command: entry.command,
       state: entry.state as CommandState,
@@ -404,17 +515,108 @@ function toEntry(entry: ChatHistoryEntry): Entry {
       timeoutSeconds: entry.timeoutSeconds,
     };
   }
-  return { id: entry.id, kind: entry.kind, text: entry.text };
+  return { id: entry.id, turn, at: entry.at, kind: entry.kind, text: entry.text };
+}
+
+function groupTurns(entries: Entry[]): TurnGroup[] {
+  const groups: TurnGroup[] = [];
+  for (const entry of entries) {
+    let group = groups[groups.length - 1];
+    if (!group || group.turn !== entry.turn) {
+      group = { turn: entry.turn, user: null, items: [] };
+      groups.push(group);
+    }
+    if (entry.kind === "user") {
+      group.user ??= entry;
+    } else {
+      group.items.push(entry);
+    }
+  }
+  return groups;
+}
+
+interface ChatTurnProps {
+  group: TurnGroup;
+  selected: boolean;
+  copied: boolean;
+  busy: boolean;
+  deleting: boolean;
+  onCopy: (entry: UserEntry) => void;
+  onSelect: (turn: string) => void;
+  onDelete: () => void;
+  onCancel: () => void;
+}
+
+function ChatTurn({
+  group,
+  selected,
+  copied,
+  busy,
+  deleting,
+  onCopy,
+  onSelect,
+  onDelete,
+  onCancel,
+}: ChatTurnProps) {
+  const user = group.user;
+  const selectable = group.turn !== "" && !busy;
+  return (
+    <div className={selected ? "chat-turn chat-turn-selected" : "chat-turn"}>
+      {user && (
+        <div className="turn-user">
+          <div className="message message-user">{user.text}</div>
+          <div className="message-actions">
+            <span className="message-time">{copied ? "已复制" : formatTime(user.at)}</span>
+            <button
+              className="icon-action"
+              type="button"
+              title="复制这条消息"
+              aria-label="复制这条消息"
+              onClick={() => onCopy(user)}
+            >
+              <CopyIcon />
+            </button>
+            <button
+              className="icon-action"
+              type="button"
+              title={
+                busy
+                  ? "对话进行中，暂时不能删除"
+                  : selectable
+                    ? "删除这条消息和这一轮的 AI 回复"
+                    : "无法删除历史消息"
+              }
+              aria-label="删除这一轮对话"
+              disabled={!selectable || deleting}
+              onClick={() => onSelect(group.turn)}
+            >
+              <TrashIcon />
+            </button>
+          </div>
+        </div>
+      )}
+      {group.items.length > 0 && (
+        <div className="turn-items">{group.items.map(renderEntry)}</div>
+      )}
+      {selected && (
+        <div className="turn-delete-bar">
+          <span>已选中这一轮对话，删除后不会再发送给大模型。</span>
+          <div className="turn-delete-buttons">
+            <button className="ghost-button" type="button" onClick={onCancel} disabled={deleting}>
+              取消
+            </button>
+            <button className="danger-button" type="button" onClick={onDelete} disabled={deleting}>
+              {deleting ? "删除中…" : "删除"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function renderEntry(entry: Entry) {
   switch (entry.kind) {
-    case "user":
-      return (
-        <div key={entry.id} className="message message-user">
-          {entry.text}
-        </div>
-      );
     case "ai":
       return (
         <div key={entry.id} className="message message-ai">
@@ -429,6 +631,8 @@ function renderEntry(entry: Entry) {
       );
     case "command":
       return <CommandCard key={entry.id} entry={entry} />;
+    default:
+      return null;
   }
 }
 
@@ -436,11 +640,134 @@ function CommandCard({ entry }: { entry: Extract<Entry, { kind: "command" }> }) 
   const meta = commandMeta(entry);
   return (
     <div className={`command command-${entry.state}`}>
-      <div className="command-line">{entry.command}</div>
-      <div className={meta.bad ? "command-meta command-meta-bad" : "command-meta"}>
-        {meta.text}
+      <div className="command-head">
+        <span className="command-tool">
+          <TerminalIcon />
+          执行命令
+        </span>
+        <span className={meta.bad ? "command-meta command-meta-bad" : "command-meta"}>
+          {meta.text}
+        </span>
       </div>
+      <div className="command-line">{entry.command}</div>
     </div>
+  );
+}
+
+function livePhase(entries: Entry[]): string {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.kind === "ai") {
+      if (entry.text.trim()) {
+        return "正在回复…";
+      }
+      continue;
+    }
+    if (entry.kind === "command") {
+      return entry.state === "started" ? "正在执行命令…" : "正在分析执行结果…";
+    }
+    return "正在思考…";
+  }
+  return "正在思考…";
+}
+
+function formatTime(at?: string): string {
+  const date = at ? new Date(at) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function newTurnId(): string {
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function writeClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // The webview can reject the async clipboard; fall back to the legacy path.
+    }
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "0";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(area);
+  if (!ok) {
+    throw new Error("浏览器拒绝了剪贴板写入");
+  }
+}
+
+function CopyIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.8" />
+      <path d="M10.5 3.4H4A1.4 1.4 0 0 0 2.6 4.8v6.6" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2.8 4.4h10.4" />
+      <path d="M6.4 4.4V3.1a.7.7 0 0 1 .7-.7h1.8a.7.7 0 0 1 .7.7v1.3" />
+      <path d="m4.6 4.4.6 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.6-8" />
+      <path d="M6.8 6.9v3.8M9.2 6.9v3.8" />
+    </svg>
+  );
+}
+
+function TerminalIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2" />
+      <path d="m4.8 6.3 2 1.7-2 1.7M8.6 9.9h2.6" />
+    </svg>
   );
 }
 

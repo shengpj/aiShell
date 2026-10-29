@@ -4,6 +4,10 @@ export interface ChatHistoryText {
   id: number;
   kind: "user" | "ai" | "error";
   text: string;
+  /** Groups the entries of one question and everything the agent answered in that turn. */
+  turn: string;
+  /** ISO timestamp of when the entry was written. */
+  at?: string;
 }
 
 export interface ChatHistoryCommand {
@@ -17,6 +21,8 @@ export interface ChatHistoryCommand {
   timeoutSeconds?: number;
   message?: string;
   reason?: string;
+  turn: string;
+  at?: string;
 }
 
 export type ChatHistoryEntry = ChatHistoryText | ChatHistoryCommand;
@@ -45,6 +51,34 @@ export async function loadChatHistory(session: string, limit = 200): Promise<Cha
     truncated?: boolean;
   };
   return { entries: payload.entries ?? [], truncated: payload.truncated === true };
+}
+
+export interface DeleteTurnResult {
+  turn: string;
+  messages: number;
+  events: number;
+}
+
+/** Deletes one question and the agent replies of that turn, also from the model context. */
+export async function deleteChatTurn(session: string, turn: string): Promise<DeleteTurnResult> {
+  const info = await getBackendInfo();
+  if (info.status !== "ready") {
+    throw new Error(info.error ?? "后端尚未就绪");
+  }
+  const { ticket } = await getBackendTicket("chat");
+  const response = await fetch(`${info.baseUrl}/api/chat/delete`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-AI-Shell-Ticket": ticket,
+    },
+    body: JSON.stringify({ session, turn }),
+  });
+  if (!response.ok) {
+    throw new Error(await errorMessage(response));
+  }
+  const payload = (await response.json()) as Partial<DeleteTurnResult>;
+  return { turn, messages: payload.messages ?? 0, events: payload.events ?? 0 };
 }
 
 /** Starts a new conversation for the host behind this terminal; the old one stays in the database. */

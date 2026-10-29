@@ -39,7 +39,25 @@ public class ChatController {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "terminal session is not connected");
     }
     String conversation = conversationOf(request.session());
-    return chats.start(conversation, request.session(), request.message().trim());
+    return chats.start(conversation, request.session(), request.message().trim(), request.turn());
+  }
+
+  @PostMapping("/api/chat/delete")
+  public Map<String, Object> delete(@RequestBody(required = false) DeleteRequest request) {
+    if (request == null || request.session() == null || request.session().isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "session is required");
+    }
+    if (request.turn() == null || request.turn().isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "turn is required");
+    }
+    if (terminals.findOpen(request.session()).isEmpty()) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "terminal session is not connected");
+    }
+    if (chats.isRunning(request.session())) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "a chat turn is already running");
+    }
+    String conversation = conversationOf(request.session());
+    return chats.deleteTurn(conversation, request.session(), request.turn().trim());
   }
 
   @GetMapping("/api/chat/history")
@@ -87,7 +105,9 @@ public class ChatController {
     return conversations.current(hostKeyOf(session));
   }
 
-  public record ChatRequest(String session, String message) {}
+  public record ChatRequest(String session, String message, String turn) {}
+
+  public record DeleteRequest(String session, String turn) {}
 
   public record ResetRequest(String session) {}
 

@@ -117,14 +117,16 @@ public class ChatTranscriptStore {
   /** The newest {@code limit} entries, returned in ascending order so the UI can append them. */
   public List<Map<String, Object>> history(String conversation, int limit) {
     List<Map<String, Object>> entries = query(
-        "SELECT id, role, content FROM chat_message WHERE conversation_id = ?"
-            + " ORDER BY id DESC LIMIT ?",
+        "SELECT id, turn_id, role, content, created_at FROM chat_message"
+            + " WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
         rs -> {
           long id = rs.getLong("id");
           String role = rs.getString("role");
           String content = rs.getString("content");
           Map<String, Object> entry = new LinkedHashMap<>();
           entry.put("id", id);
+          entry.put("turn", rs.getString("turn_id"));
+          entry.put("at", rs.getString("created_at"));
           entry.put("kind", role);
           if ("command".equals(role)) {
             Object parsed = json.readValue(content, Map.class);
@@ -146,6 +148,42 @@ public class ChatTranscriptStore {
     java.util.Collections.reverse(entries);
     return entries;
   }
+
+  /**
+   * The instant range a turn occupies in the ADK event log: from its user message until the next
+   * user message. Null when the turn has no user row (nothing was persisted for it).
+   */
+  public TurnWindow turnWindow(String conversation, String turn) {
+    List<Object[]> starts =
+        query(
+            "SELECT id, created_at FROM chat_message"
+                + " WHERE conversation_id = ? AND turn_id = ? AND role = 'user'"
+                + " ORDER BY id LIMIT 1",
+            rs -> new Object[] {rs.getLong("id"), rs.getString("created_at")},
+            conversation,
+            turn);
+    if (starts.isEmpty()) {
+      return null;
+    }
+    long userId = (Long) starts.get(0)[0];
+    Instant start = Instant.parse((String) starts.get(0)[1]);
+    List<Instant> next =
+        query(
+            "SELECT created_at FROM chat_message"
+                + " WHERE conversation_id = ? AND id > ? AND role = 'user'"
+                + " ORDER BY id LIMIT 1",
+            rs -> Instant.parse(rs.getString("created_at")),
+            conversation,
+            userId);
+    return new TurnWindow(start, next.isEmpty() ? null : next.get(0));
+  }
+
+  public int deleteTurn(String conversation, String turn) {
+    return update(
+        "DELETE FROM chat_message WHERE conversation_id = ? AND turn_id = ?", conversation, turn);
+  }
+
+  public record TurnWindow(Instant start, Instant end) {}
 
   public int count(String conversation) {
     try (Connection connection = open();
@@ -196,6 +234,9 @@ public class ChatTranscriptStore {
       statement.execute(
           "CREATE INDEX IF NOT EXISTS chat_message_conversation"
               + " ON chat_message(conversation_id, id)");
+      statement.execute(
+          "CREATE INDEX IF NOT EXISTS chat_message_turn"
+              + " ON chat_message(conversation_id, turn_id)");
     }
   }
 

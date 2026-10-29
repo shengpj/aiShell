@@ -146,6 +146,55 @@ public class SqliteAgentSessionService implements BaseSessionService {
                 .build());
   }
 
+  /**
+   * Deletes the events appended inside a chat turn so the model stops seeing that turn as context.
+   * Turns are sequential per conversation, so their event rows form contiguous time ranges.
+   */
+  public int deleteEventsBetween(
+      String sessionId, Instant startInclusive, Instant endExclusive) {
+    try (Connection connection = open()) {
+      List<Long> seqs = new ArrayList<>();
+      try (PreparedStatement select =
+          connection.prepareStatement(
+              "SELECT seq, created_at FROM agent_event WHERE session_id = ? ORDER BY seq")) {
+        select.setString(1, sessionId);
+        try (ResultSet rs = select.executeQuery()) {
+          while (rs.next()) {
+            Instant at = Instant.parse(rs.getString("created_at"));
+            if (at.isBefore(startInclusive)) {
+              continue;
+            }
+            if (endExclusive != null && !at.isBefore(endExclusive)) {
+              continue;
+            }
+            seqs.add(rs.getLong("seq"));
+          }
+        }
+      }
+      if (seqs.isEmpty()) {
+        return 0;
+      }
+      connection.setAutoCommit(false);
+      try (PreparedStatement delete =
+          connection.prepareStatement("DELETE FROM agent_event WHERE seq = ?")) {
+        for (Long seq : seqs) {
+          delete.setLong(1, seq);
+          delete.addBatch();
+        }
+        int[] counts = delete.executeBatch();
+        connection.commit();
+        return counts.length;
+      } catch (SQLException e) {
+        connection.rollback();
+        throw e;
+      } finally {
+        connection.setAutoCommit(true);
+      }
+    } catch (SQLException e) {
+      throw new IllegalStateException("agent session database delete failed", e);
+    }
+  }
+
   @Override
   public Single<Event> appendEvent(Session session, Event event) {
     return Single.fromCallable(

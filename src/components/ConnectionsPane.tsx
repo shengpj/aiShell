@@ -279,14 +279,6 @@ export default function ConnectionsPane({
     <aside className="pane connections">
       <div className="pane-header">
         <span>连接</span>
-        <button
-          className="icon-button"
-          type="button"
-          title="新建连接"
-          onClick={openCreate}
-        >
-          +
-        </button>
       </div>
       <div className="pane-body">
         {error && <p className="conn-error">{error}</p>}
@@ -408,6 +400,13 @@ export default function ConnectionsPane({
           </form>
         )}
 
+        {!connForm && (
+          <button className="conn-add" type="button" onClick={openCreate}>
+            <span className="conn-add-plus">+</span>
+            新建连接
+          </button>
+        )}
+
         {!loaded && !error && (
           <p className="empty-hint">正在加载连接…</p>
         )}
@@ -415,7 +414,7 @@ export default function ConnectionsPane({
         {loaded && connections.length === 0 && !connForm && (
           <>
             <p className="empty-title">暂无连接</p>
-            <p className="empty-hint">点击右上角 + 新建连接，保存后即可打开终端。</p>
+            <p className="empty-hint">点击“新建连接”，保存后即可打开终端。</p>
           </>
         )}
 

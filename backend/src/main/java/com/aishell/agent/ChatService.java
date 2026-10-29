@@ -95,7 +95,7 @@ public class ChatService {
     return active.contains(sessionId);
   }
 
-  public SseEmitter start(String conversationId, String sessionId, String message) {
+  public SseEmitter start(String conversationId, String sessionId, String message, String turn) {
     if (!active.add(sessionId)) {
       throw new ResponseStatusException(
           HttpStatus.CONFLICT, "a chat turn is already running for this session");
@@ -114,7 +114,8 @@ public class ChatService {
           }
         };
 
-    String turnId = java.util.UUID.randomUUID().toString();
+    String turnId =
+        turn == null || turn.isBlank() ? java.util.UUID.randomUUID().toString() : turn.trim();
     recordUser(conversationId, turnId, message);
     ChatChannel channel =
         new ChatChannel(
@@ -155,6 +156,26 @@ public class ChatService {
 
   public int historyCount(String conversationId) {
     return transcript.count(conversationId);
+  }
+
+  /**
+   * Removes one question and everything the agent answered in that turn, from both the visible
+   * transcript and the ADK event log, so the model no longer receives it as context.
+   */
+  public Map<String, Object> deleteTurn(String conversationId, String sessionId, String turnId) {
+    if (isRunning(sessionId)) {
+      throw new ResponseStatusException(
+          HttpStatus.CONFLICT, "a chat turn is already running for this session");
+    }
+    ChatTranscriptStore.TurnWindow window = transcript.turnWindow(conversationId, turnId);
+    if (window == null) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "chat turn not found");
+    }
+    int messages = transcript.deleteTurn(conversationId, turnId);
+    int events = sessions.deleteEventsBetween(conversationId, window.start(), window.end());
+    log.info(
+        "deleted chat turn {} of {}: {} messages, {} agent events", turnId, conversationId, messages, events);
+    return Map.of("turn", turnId, "messages", messages, "events", events);
   }
 
   private void recordUser(String conversationId, String turnId, String message) {

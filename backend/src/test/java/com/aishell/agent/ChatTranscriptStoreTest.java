@@ -3,6 +3,7 @@ package com.aishell.agent;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -97,6 +98,65 @@ class ChatTranscriptStoreTest {
     assertThat(store.history("b:22")).extracting(entry -> entry.get("text"))
         .containsExactly("second host");
     assertThat(store.history("c:22")).isEmpty();
+  }
+
+  @Test
+  void historyCarriesTheTurnAndTimestamp() {
+    ChatTranscriptStore store = store();
+    store.recordUser("h:22", "t1", "check disk");
+    store.recordAiText("h:22", "t1", "fine.");
+
+    List<Map<String, Object>> history = store.history("h:22");
+
+    assertThat(history).extracting(entry -> entry.get("turn")).containsOnly("t1");
+    assertThat(history).allSatisfy(entry -> assertThat(entry.get("at")).isInstanceOf(String.class));
+    assertThat(Instant.parse((String) history.get(0).get("at")))
+        .isBeforeOrEqualTo(Instant.parse((String) history.get(1).get("at")));
+  }
+
+  @Test
+  void turnWindowRunsFromTheQuestionToTheNextOne() {
+    ChatTranscriptStore store = store();
+    store.recordUser("h:22", "t1", "first");
+    store.recordAiText("h:22", "t1", "ok.");
+    store.recordUser("h:22", "t2", "second");
+
+    List<Map<String, Object>> history = store.history("h:22");
+    ChatTranscriptStore.TurnWindow first = store.turnWindow("h:22", "t1");
+    ChatTranscriptStore.TurnWindow second = store.turnWindow("h:22", "t2");
+
+    assertThat(first).isNotNull();
+    assertThat(first.start()).isEqualTo(Instant.parse((String) history.get(0).get("at")));
+    assertThat(first.end()).isEqualTo(Instant.parse((String) history.get(2).get("at")));
+    assertThat(second.start()).isEqualTo(first.end());
+    assertThat(second.end()).isNull();
+    assertThat(store.turnWindow("h:22", "missing")).isNull();
+  }
+
+  @Test
+  void deleteTurnRemovesOnlyThatTurn() {
+    ChatTranscriptStore store = store();
+    store.recordUser("h:22", "t1", "first");
+    store.recordAiText("h:22", "t1", "ok.");
+    store.recordUser("h:22", "t2", "second");
+
+    assertThat(store.deleteTurn("h:22", "t1")).isEqualTo(2);
+
+    assertThat(store.history("h:22")).extracting(entry -> entry.get("text"))
+        .containsExactly("second");
+  }
+
+  @Test
+  void deleteTurnLeavesOtherConversationsAlone() {
+    ChatTranscriptStore store = store();
+    store.recordUser("a:22", "t1", "a first");
+    store.recordUser("b:22", "t1", "b first");
+
+    assertThat(store.deleteTurn("a:22", "t1")).isEqualTo(1);
+
+    assertThat(store.history("a:22")).isEmpty();
+    assertThat(store.history("b:22")).extracting(entry -> entry.get("text"))
+        .containsExactly("b first");
   }
 
   private static Map<String, Object> command(String state, String command) {

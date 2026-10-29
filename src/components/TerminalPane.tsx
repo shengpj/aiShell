@@ -71,7 +71,13 @@ export default function TerminalPane({ onSessionChange, connection }: TerminalPa
       fontFamily: 'Consolas, "Cascadia Mono", "Courier New", monospace',
       fontSize: 13,
       cursorBlink: true,
-      theme: { background: "#1e1e1e", foreground: "#cccccc", cursor: "#cccccc" },
+      theme: {
+        background: "#111110",
+        foreground: "#eeeeeb",
+        cursor: "#5cb870",
+        cursorAccent: "#111110",
+        selectionBackground: "#335942",
+      },
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
@@ -275,7 +281,7 @@ export default function TerminalPane({ onSessionChange, connection }: TerminalPa
       {phase === "idle" && (
         <div className="terminal-empty">
           <p className="empty-title">还没有打开终端</p>
-          <p className="empty-hint">在左侧选择已有连接，或点击 + 新建连接。</p>
+          <p className="empty-hint">在左侧选择已有连接，或点击“新建连接”。</p>
         </div>
       )}
       {message && <div className="terminal-message">{message}</div>}
