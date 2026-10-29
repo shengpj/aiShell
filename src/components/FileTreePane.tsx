@@ -64,10 +64,11 @@ interface TreeRowProps {
   depth: number;
   expanded: boolean;
   current: boolean;
+  onOpen: (path: string) => void;
   onToggle: (path: string) => void;
 }
 
-function TreeRow({ path, depth, expanded, current, onToggle }: TreeRowProps) {
+function TreeRow({ path, depth, expanded, current, onOpen, onToggle }: TreeRowProps) {
   const name = path === "/" ? "/" : path.slice(path.lastIndexOf("/") + 1);
   return (
     <button
@@ -76,9 +77,18 @@ function TreeRow({ path, depth, expanded, current, onToggle }: TreeRowProps) {
       style={{ paddingLeft: 6 + depth * 12 }}
       title={path}
       aria-expanded={expanded}
-      onClick={() => onToggle(path)}
+      onClick={() => onOpen(path)}
     >
-      <span className="tree-caret">{expanded ? "▾" : "▸"}</span>
+      <span
+        className="tree-caret"
+        title={expanded ? "收起子目录" : "展开子目录"}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle(path);
+        }}
+      >
+        {expanded ? "▾" : "▸"}
+      </span>
       <span className="tree-name tree-dir">{name}</span>
     </button>
   );
@@ -103,6 +113,7 @@ export default function FileTreePane({ sessionId }: { sessionId: string | null }
   const previewRequest = useRef(0);
   const treeRef = useRef<Record<string, FileEntry[]>>({});
   const treeLoading = useRef<Set<string>>(new Set());
+  const tableRef = useRef<HTMLDivElement | null>(null);
 
   const cacheTreeDir = (path: string, entries: FileEntry[]) => {
     treeRef.current = {
@@ -158,6 +169,7 @@ export default function FileTreePane({ sessionId }: { sessionId: string | null }
       setListing(result);
       setNotice(result.truncated ? `目录条目过多，仅显示前 ${result.entries.length} 项。` : null);
       cacheTreeDir(path, result.entries);
+      tableRef.current?.scrollTo({ top: 0 });
     } catch (cause) {
       if (listingRequest.current === token && sessionRef.current === session) {
         setError(message(cause));
@@ -282,6 +294,7 @@ export default function FileTreePane({ sessionId }: { sessionId: string | null }
           depth={depth}
           expanded={isExpanded}
           current={dir.path === cwd}
+          onOpen={navigate}
           onToggle={toggleTreeDir}
         />,
       );
@@ -339,6 +352,7 @@ export default function FileTreePane({ sessionId }: { sessionId: string | null }
                 depth={0}
                 expanded={expanded.includes("/")}
                 current={cwd === "/"}
+                onOpen={navigate}
                 onToggle={toggleTreeDir}
               />
               <div className="tree">{treeRows}</div>
@@ -381,7 +395,7 @@ export default function FileTreePane({ sessionId }: { sessionId: string | null }
                 {notice && <span className="file-notice">{notice}</span>}
               </div>
               {error && <p className="conn-error file-error">{error}</p>}
-              <div className="file-table-wrap">
+              <div className="file-table-wrap" ref={tableRef}>
                 <table className="file-table">
                   <colgroup>
                     <col />

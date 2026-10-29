@@ -957,6 +957,11 @@ body {
   width: 12px;
   color: var(--muted);
   font-size: 10px;
+  cursor: pointer;
+}
+
+.tree-caret:hover {
+  color: var(--text);
 }
 
 .tree-name {
