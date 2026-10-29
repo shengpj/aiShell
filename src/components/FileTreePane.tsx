@@ -7,6 +7,7 @@ import {
   type FilePreview,
   type FileType,
 } from "../api/files";
+import FileIcon, { iconKind } from "./FileIcon";
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -89,6 +90,7 @@ function TreeRow({ path, depth, expanded, current, onOpen, onToggle }: TreeRowPr
       >
         {expanded ? "▾" : "▸"}
       </span>
+      <FileIcon kind={expanded ? "folder-open" : "folder"} className="tree-icon" />
       <span className="tree-name tree-dir">{name}</span>
     </button>
   );
@@ -427,8 +429,8 @@ export default function FileTreePane({ sessionId }: { sessionId: string | null }
                               entry.type === "dir" ? navigate(entry.path) : void openPreview(entry)
                             }
                           >
-                            {entry.type === "dir" ? "▸ " : ""}
-                            {entry.name}
+                            <FileIcon kind={iconKind(entry.name, entry.type)} />
+                            <span className="file-name-text">{entry.name}</span>
                           </button>
                         </td>
                         <td className="num">{entry.type === "dir" ? "—" : formatSize(entry.size)}</td>

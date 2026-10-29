@@ -868,7 +868,9 @@ body {
 }
 
 .file-name {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   max-width: 100%;
   padding: 0;
   border: none;
@@ -876,10 +878,14 @@ body {
   color: var(--text);
   font: inherit;
   text-align: left;
+  cursor: pointer;
+}
+
+.file-name-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
 }
 
 .file-name:hover {
@@ -962,6 +968,54 @@ body {
 
 .tree-caret:hover {
   color: var(--text);
+}
+
+.tree-icon {
+  flex: none;
+}
+
+.file-icon {
+  display: block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.icon-folder,
+.icon-folder-open {
+  color: #e3ae4e;
+}
+
+.icon-link {
+  color: #6cb6ff;
+}
+
+.icon-image {
+  color: #5fb98a;
+}
+
+.icon-archive {
+  color: #cf9050;
+}
+
+.icon-code {
+  color: #82b4ea;
+}
+
+.icon-script {
+  color: #5fc2b8;
+}
+
+.icon-config {
+  color: #b3a3dc;
+}
+
+.icon-text {
+  color: #9aa8b8;
+}
+
+.icon-file {
+  color: #8792a0;
 }
 
 .tree-name {
