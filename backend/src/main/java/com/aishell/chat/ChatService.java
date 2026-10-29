@@ -1,5 +1,8 @@
-package com.aishell.agent;
+package com.aishell.chat;
 
+import com.aishell.chat.command.AiCommandGuard;
+import com.aishell.chat.command.AiProperties;
+import com.aishell.chat.command.RunCommandTool;
 import com.aishell.terminal.TerminalBridge;
 import com.aishell.terminal.TerminalSessions;
 import com.google.adk.agents.LlmAgent;

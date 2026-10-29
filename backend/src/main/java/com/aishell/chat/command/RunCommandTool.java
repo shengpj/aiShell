@@ -1,5 +1,7 @@
-package com.aishell.agent;
+package com.aishell.chat.command;
 
+import com.aishell.chat.AuditLog;
+import com.aishell.chat.ChatChannel;
 import com.aishell.terminal.AiCommandResult;
 import com.aishell.terminal.TerminalBridge;
 import com.aishell.terminal.TerminalSessions;
@@ -18,7 +20,7 @@ public final class RunCommandTool {
   private final ChatChannel channel;
   private final Duration timeout;
 
-  RunCommandTool(
+  public RunCommandTool(
       String sessionId,
       TerminalSessions sessions,
       AiCommandGuard guard,

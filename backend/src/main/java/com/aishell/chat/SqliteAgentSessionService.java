@@ -1,4 +1,4 @@
-package com.aishell.agent;
+package com.aishell.chat;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.google.adk.JsonBaseModel;

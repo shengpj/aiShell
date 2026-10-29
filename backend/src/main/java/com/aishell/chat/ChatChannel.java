@@ -1,4 +1,4 @@
-package com.aishell.agent;
+package com.aishell.chat;
 
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -7,7 +7,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import tools.jackson.databind.ObjectMapper;
 
 /** Serializes SSE events from the agent run and the command tool onto one emitter. */
-final class ChatChannel {
+public final class ChatChannel {
 
   /** Mirrors every outgoing event into the persisted transcript. */
   interface Sink {
@@ -27,7 +27,7 @@ final class ChatChannel {
     this.sink = sink;
   }
 
-  void send(String event, Object data) {
+  public void send(String event, Object data) {
     if (sink != null) {
       sink.onEvent(event, data);
     }

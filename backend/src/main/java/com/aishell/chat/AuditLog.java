@@ -1,4 +1,4 @@
-package com.aishell.agent;
+package com.aishell.chat;
 
 import com.aishell.terminal.AiCommandResult;
 import com.aishell.terminal.UserCommandListener;

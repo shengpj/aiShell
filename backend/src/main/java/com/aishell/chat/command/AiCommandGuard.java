@@ -1,4 +1,4 @@
-package com.aishell.agent;
+package com.aishell.chat.command;
 
 import java.util.ArrayList;
 import java.util.List;

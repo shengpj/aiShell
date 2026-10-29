@@ -1,4 +1,4 @@
-package com.aishell.agent;
+package com.aishell.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

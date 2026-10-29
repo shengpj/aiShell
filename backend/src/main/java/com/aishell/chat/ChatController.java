@@ -1,4 +1,4 @@
-package com.aishell.agent;
+package com.aishell.chat;
 
 import com.aishell.terminal.TerminalSessions;
 import java.util.List;

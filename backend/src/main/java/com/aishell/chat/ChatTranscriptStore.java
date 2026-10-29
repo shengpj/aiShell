@@ -1,4 +1,4 @@
-package com.aishell.agent;
+package com.aishell.chat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

@@ -1,7 +1,9 @@
-package com.aishell.agent;
+package com.aishell.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aishell.chat.command.AiCommandGuard;
+import com.aishell.chat.command.AiProperties;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
