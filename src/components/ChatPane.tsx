@@ -13,6 +13,7 @@ import { listModels, type ModelView } from "../api/models";
 import { contextSuffix, limitAiContext } from "../utils/aiContext";
 import ModelPicker from "./ModelPicker";
 import ModelSettings from "./ModelSettings";
+import RunbookPicker from "./RunbookPicker";
 
 async function confirmNewConversation(): Promise<boolean> {
   if (!isTauri()) {
@@ -109,6 +110,7 @@ export default function ChatPane({
   const [models, setModels] = useState<ModelView[]>([]);
   const [modelId, setModelId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [runbookOpen, setRunbookOpen] = useState(false);
   const [executionPolicy, setExecutionPolicy] = useState<ExecutionPolicy>(() => {
     try {
       const value = window.localStorage.getItem(EXECUTION_POLICY_KEY);
@@ -479,6 +481,12 @@ export default function ChatPane({
     setNotice("已把命令输出带入输入框，确认后发送给 AI");
   };
 
+  const useRunbook = (prompt: string) => {
+    setDraft(prompt);
+    setRunbookOpen(false);
+    setNotice("Runbook 已填入输入框，确认后发送给 AI");
+  };
+
   useEffect(
     () => () => {
       if (copyTimer.current !== null) {
@@ -592,6 +600,15 @@ export default function ChatPane({
           <button
             className="mini"
             type="button"
+            title="选择一个可审阅的运维排查流程"
+            onClick={() => setRunbookOpen(true)}
+            disabled={!sessionId || busy || historyLoading}
+          >
+            Runbook
+          </button>
+          <button
+            className="mini"
+            type="button"
             title="开始新对话（当前对话从界面清空，历史仍保留在数据库中）"
             onClick={() => void startNewConversation()}
             disabled={!sessionId || busy || historyLoading}
@@ -700,6 +717,7 @@ export default function ChatPane({
           onChanged={() => void loadModels()}
         />
       )}
+      {runbookOpen && <RunbookPicker onClose={() => setRunbookOpen(false)} onUse={useRunbook} />}
     </aside>
   );
 }

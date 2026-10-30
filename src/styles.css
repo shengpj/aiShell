@@ -1277,6 +1277,109 @@ body {
   overflow-y: auto;
 }
 
+.runbook-modal {
+  width: min(760px, 100%);
+}
+
+.runbook-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.runbook-list {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--panel-alt);
+}
+
+.runbook-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.runbook-card:hover,
+.runbook-card.selected {
+  border-color: var(--accent-line);
+  background: rgba(92, 184, 112, 0.08);
+}
+
+.runbook-card-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.runbook-card-category {
+  color: var(--green);
+  font-size: 10px;
+}
+
+.runbook-card-summary {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.runbook-detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.runbook-detail h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.runbook-section-title {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.runbook-steps {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 8px 8px 8px 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-alt);
+  color: var(--muted);
+  font: 11px/1.45 Consolas, "Cascadia Mono", "Courier New", monospace;
+}
+
+@media (max-width: 640px) {
+  .runbook-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .runbook-list {
+    max-height: 190px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
 .model-list {
   display: flex;
   flex-direction: column;
