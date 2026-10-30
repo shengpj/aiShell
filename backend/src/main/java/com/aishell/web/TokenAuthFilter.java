@@ -68,7 +68,9 @@ public class TokenAuthFilter extends OncePerRequestFilter {
   }
 
   private static String ticketPurpose(String uri) {
-    if (uri.startsWith("/api/chat") || uri.equals("/api/agent/stop")) {
+    if (uri.startsWith("/api/chat")
+        || uri.startsWith("/api/commands")
+        || uri.equals("/api/agent/stop")) {
       return "chat";
     }
     if (uri.startsWith("/api/hosts") || uri.startsWith("/api/profiles")) {

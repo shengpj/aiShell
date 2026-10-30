@@ -18,11 +18,33 @@ export interface ChatHistoryCommand {
   status?: string;
   exitCode?: number;
   durationMs?: number;
+  output?: string;
   timeoutSeconds?: number;
+  approvalToken?: string;
   message?: string;
   reason?: string;
   turn: string;
   at?: string;
+}
+
+/** Resolves a command that is waiting for the user's confirmation. */
+export async function decideChatCommand(token: string, approved: boolean): Promise<void> {
+  const info = await getBackendInfo();
+  if (info.status !== "ready") {
+    throw new Error(info.error ?? "后端尚未就绪");
+  }
+  const { ticket } = await getBackendTicket("chat");
+  const response = await fetch(`${info.baseUrl}/api/chat/command-decision`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-AI-Shell-Ticket": ticket,
+    },
+    body: JSON.stringify({ token, approved }),
+  });
+  if (!response.ok) {
+    throw new Error(await errorMessage(response));
+  }
 }
 
 export type ChatHistoryEntry = ChatHistoryText | ChatHistoryCommand;

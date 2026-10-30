@@ -2,6 +2,7 @@ import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { getBackendInfo, getBackendTicket, isTauri } from "../api/backend";
 import {
+  decideChatCommand,
   deleteChatTurn,
   loadChatHistory,
   resetConversation,
@@ -33,9 +34,21 @@ interface ChatPaneProps {
   sessionId: string | null;
   /** Models can only be listed once the sidecar answers. */
   backendReady: boolean;
+  prefill?: string | null;
+  onPrefillConsumed?: () => void;
 }
 
-type CommandState = "started" | "finished" | "refused";
+type CommandState = "pending" | "started" | "finished" | "refused";
+
+type ExecutionPolicy = "auto" | "confirm" | "explain";
+
+const EXECUTION_POLICY_KEY = "aishell.execution-policy";
+
+const executionPolicies: Array<{ value: ExecutionPolicy; label: string; title: string }> = [
+  { value: "auto", label: "自动", title: "AI 命令自动执行" },
+  { value: "confirm", label: "确认", title: "每条 AI 命令执行前确认" },
+  { value: "explain", label: "仅解释", title: "AI 只分析和解释，不执行命令" },
+];
 
 interface CommandEvent {
   state: CommandState;
@@ -43,9 +56,11 @@ interface CommandEvent {
   status?: string;
   exitCode?: number;
   durationMs?: number;
+  output?: string;
   reason?: string;
   message?: string;
   timeoutSeconds?: number;
+  approvalToken?: string;
 }
 
 type Entry =
@@ -60,8 +75,10 @@ type Entry =
       status?: string;
       exitCode?: number;
       durationMs?: number;
+      output?: string;
       note?: string;
       timeoutSeconds?: number;
+      approvalToken?: string;
       turn: string;
       at?: string;
     };
@@ -74,7 +91,12 @@ interface TurnGroup {
   items: Entry[];
 }
 
-export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
+export default function ChatPane({
+  sessionId,
+  backendReady,
+  prefill = null,
+  onPrefillConsumed,
+}: ChatPaneProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -86,11 +108,28 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
   const [models, setModels] = useState<ModelView[]>([]);
   const [modelId, setModelId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [executionPolicy, setExecutionPolicy] = useState<ExecutionPolicy>(() => {
+    try {
+      const value = window.localStorage.getItem(EXECUTION_POLICY_KEY);
+      return value === "confirm" || value === "explain" ? value : "auto";
+    } catch {
+      return "auto";
+    }
+  });
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const nextId = useRef(1);
   const currentTurn = useRef<string | null>(null);
   const copyTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!prefill) {
+      return;
+    }
+    setDraft(prefill);
+    onPrefillConsumed?.();
+  }, [onPrefillConsumed, prefill]);
 
   const loadModels = useCallback(async () => {
     try {
@@ -197,32 +236,81 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
       return;
     }
     const turn = currentTurn.current ?? "";
-    if (event.state === "started") {
+    if (event.state === "pending") {
       setEntries((current) => [
         ...current,
         {
           id: nextId.current++,
           kind: "command",
           command: event.command,
-          state: "started",
+          state: "pending",
+          approvalToken: event.approvalToken,
           timeoutSeconds: event.timeoutSeconds,
           turn,
         },
       ]);
       return;
     }
+    if (event.state === "started") {
+      setEntries((current) => {
+        const next = [...current];
+        for (let index = next.length - 1; index >= 0; index -= 1) {
+          const entry = next[index];
+          if (
+            entry.kind === "command" &&
+            entry.state === "pending" &&
+            entry.approvalToken === event.approvalToken
+          ) {
+            next[index] = {
+              ...entry,
+              state: "started",
+              timeoutSeconds: event.timeoutSeconds,
+            };
+            return next;
+          }
+        }
+        return [
+          ...next,
+          {
+            id: nextId.current++,
+            kind: "command",
+            command: event.command,
+            state: "started",
+            approvalToken: event.approvalToken,
+            timeoutSeconds: event.timeoutSeconds,
+            turn,
+          },
+        ];
+      });
+      return;
+    }
     if (event.state === "refused") {
-      setEntries((current) => [
-        ...current,
-        {
-          id: nextId.current++,
-          kind: "command",
-          command: event.command,
-          state: "refused",
-          note: event.reason,
-          turn,
-        },
-      ]);
+      setEntries((current) => {
+        const next = [...current];
+        for (let index = next.length - 1; index >= 0; index -= 1) {
+          const entry = next[index];
+          if (
+            entry.kind === "command" &&
+            entry.state === "pending" &&
+            entry.approvalToken === event.approvalToken
+          ) {
+            next[index] = { ...entry, state: "refused", note: event.reason };
+            return next;
+          }
+        }
+        return [
+          ...next,
+          {
+            id: nextId.current++,
+            kind: "command",
+            command: event.command,
+            state: "refused",
+            note: event.reason,
+            approvalToken: event.approvalToken,
+            turn,
+          },
+        ];
+      });
       return;
     }
     setEntries((current) => {
@@ -231,7 +319,8 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
         if (
           entry.kind === "command" &&
           entry.state === "started" &&
-          entry.command === event.command
+          (entry.command === event.command ||
+            (event.approvalToken !== undefined && entry.approvalToken === event.approvalToken))
         ) {
           const next = [...current];
           next[index] = {
@@ -241,6 +330,8 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
             exitCode: event.exitCode,
             durationMs: event.durationMs,
             note: event.message,
+            output: event.output,
+            approvalToken: event.approvalToken ?? entry.approvalToken,
           };
           return next;
         }
@@ -256,10 +347,34 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
           exitCode: event.exitCode,
           durationMs: event.durationMs,
           note: event.message,
+          output: event.output,
           turn,
         },
       ];
     });
+  };
+
+  const changeExecutionPolicy = (value: ExecutionPolicy) => {
+    setExecutionPolicy(value);
+    try {
+      window.localStorage.setItem(EXECUTION_POLICY_KEY, value);
+    } catch {
+      // Preferences are still active for this session when storage is unavailable.
+    }
+  };
+
+  const decideCommand = async (token: string, approved: boolean) => {
+    if (pendingAction) return;
+    setPendingAction(token);
+    setNotice(approved ? "正在批准命令…" : "正在拒绝命令…");
+    try {
+      await decideChatCommand(token, approved);
+      setNotice(approved ? "命令已批准" : "命令已拒绝");
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPendingAction(null);
+    }
   };
 
   const applyEvent = (event: string, data: string) => {
@@ -284,8 +399,8 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
     }
   };
 
-  const send = async () => {
-    const message = draft.trim();
+  const send = async (messageOverride?: string) => {
+    const message = (messageOverride ?? draft).trim();
     if (!message || busy || !sessionId) {
       return;
     }
@@ -325,6 +440,7 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
           message,
           turn,
           ...(modelId ? { modelId } : {}),
+          executionPolicy,
         }),
       });
       if (!response.ok || !response.body) {
@@ -345,6 +461,10 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
       }
       setBusy(false);
     }
+  };
+
+  const retryCommand = (command: string) => {
+    void send(`请重试刚才失败的命令：${command}`);
   };
 
   useEffect(
@@ -473,7 +593,7 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
           <div className="message message-ai">
             {historyLoading
               ? "正在加载历史对话…"
-              : "连接终端后，可以让我检查状态或执行运维命令。命令会自动执行，危险命令会被拦截。"}
+              : "连接终端后，可以让我检查状态或执行运维命令。执行策略可以在输入框下方切换。"}
           </div>
         )}
         {turns.map((group) => (
@@ -488,6 +608,9 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
             onSelect={setSelectedTurn}
             onDelete={() => void removeSelectedTurn()}
             onCancel={() => setSelectedTurn(null)}
+            pendingAction={pendingAction}
+            onDecideCommand={decideCommand}
+            onRetryCommand={retryCommand}
           />
         ))}
         {busy && (
@@ -526,6 +649,21 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
               disabled={busy || !backendReady}
               loading={!backendReady}
             />
+            <div className="execution-policy" role="group" aria-label="AI 命令执行策略">
+              {executionPolicies.map((option) => (
+                <button
+                  key={option.value}
+                  className={executionPolicy === option.value ? "policy-option active" : "policy-option"}
+                  type="button"
+                  title={option.title}
+                  aria-pressed={executionPolicy === option.value}
+                  disabled={busy}
+                  onClick={() => changeExecutionPolicy(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         {busy ? (
@@ -568,6 +706,8 @@ function toEntry(entry: ChatHistoryEntry): Entry {
       durationMs: entry.durationMs,
       note: entry.message ?? entry.reason,
       timeoutSeconds: entry.timeoutSeconds,
+      output: entry.output,
+      approvalToken: entry.approvalToken,
     };
   }
   return { id: entry.id, turn, at: entry.at, kind: entry.kind, text: entry.text };
@@ -600,6 +740,9 @@ interface ChatTurnProps {
   onSelect: (turn: string) => void;
   onDelete: () => void;
   onCancel: () => void;
+  pendingAction: string | null;
+  onDecideCommand: (token: string, approved: boolean) => void;
+  onRetryCommand: (command: string) => void;
 }
 
 function ChatTurn({
@@ -612,6 +755,9 @@ function ChatTurn({
   onSelect,
   onDelete,
   onCancel,
+  pendingAction,
+  onDecideCommand,
+  onRetryCommand,
 }: ChatTurnProps) {
   const user = group.user;
   const selectable = group.turn !== "" && !busy;
@@ -664,13 +810,22 @@ function ChatTurn({
         </div>
       )}
       {group.items.length > 0 && (
-        <div className="turn-items">{group.items.map(renderEntry)}</div>
+        <div className="turn-items">
+          {group.items.map((entry) =>
+            renderEntry(entry, pendingAction, onDecideCommand, onRetryCommand),
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-function renderEntry(entry: Entry) {
+function renderEntry(
+  entry: Entry,
+  pendingAction: string | null,
+  onDecideCommand: (token: string, approved: boolean) => void,
+  onRetryCommand: (command: string) => void,
+) {
   switch (entry.kind) {
     case "ai":
       return (
@@ -685,14 +840,37 @@ function renderEntry(entry: Entry) {
         </div>
       );
     case "command":
-      return <CommandCard key={entry.id} entry={entry} />;
+      return (
+        <CommandCard
+          key={entry.id}
+          entry={entry}
+          pendingAction={pendingAction}
+          onDecide={onDecideCommand}
+          onRetry={onRetryCommand}
+        />
+      );
     default:
       return null;
   }
 }
 
-function CommandCard({ entry }: { entry: Extract<Entry, { kind: "command" }> }) {
+function CommandCard({
+  entry,
+  pendingAction,
+  onDecide,
+  onRetry,
+}: {
+  entry: Extract<Entry, { kind: "command" }>;
+  pendingAction: string | null;
+  onDecide: (token: string, approved: boolean) => void;
+  onRetry: (command: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
   const meta = commandMeta(entry);
+  const failed =
+    entry.state === "finished" &&
+    ((entry.status !== undefined && entry.status !== "completed") ||
+      (entry.exitCode !== undefined && entry.exitCode !== 0));
   return (
     <div className={`command command-${entry.state}`}>
       <div className="command-head">
@@ -704,7 +882,78 @@ function CommandCard({ entry }: { entry: Extract<Entry, { kind: "command" }> }) 
           {meta.text}
         </span>
       </div>
-      <div className="command-line">{entry.command}</div>
+      <div className="command-line-row">
+        <div className="command-line">{entry.command}</div>
+        <button
+          className="icon-action"
+          type="button"
+          title="复制命令"
+          aria-label="复制命令"
+          onClick={() => void copyCommandText(entry.command)}
+        >
+          <CopyIcon />
+        </button>
+      </div>
+      {entry.output && (
+        <div className="command-output-wrap">
+          <div className="command-output-actions">
+            <button
+              className="icon-action"
+              type="button"
+              title={expanded ? "收起命令输出" : "查看命令输出"}
+              aria-label={expanded ? "收起命令输出" : "查看命令输出"}
+              onClick={() => setExpanded((current) => !current)}
+            >
+              {expanded ? "⌃" : "⌄"}
+            </button>
+            <button
+              className="icon-action"
+              type="button"
+              title="复制命令输出"
+              aria-label="复制命令输出"
+              onClick={() => void copyCommandText(entry.output ?? "")}
+            >
+              <CopyIcon />
+            </button>
+          </div>
+          {expanded && <pre className="command-output">{entry.output}</pre>}
+        </div>
+      )}
+      {entry.state === "pending" && entry.approvalToken && (
+        <div className="command-approval">
+          <span>等待确认后才会写入终端</span>
+          <div className="command-approval-actions">
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={pendingAction !== null}
+              onClick={() => onDecide(entry.approvalToken!, false)}
+            >
+              拒绝
+            </button>
+            <button
+              className="connect-button"
+              type="button"
+              disabled={pendingAction !== null}
+              onClick={() => onDecide(entry.approvalToken!, true)}
+            >
+              {pendingAction === entry.approvalToken ? "处理中…" : "执行"}
+            </button>
+          </div>
+        </div>
+      )}
+      {failed && (
+        <div className="command-retry">
+          <button
+            className="ghost-button"
+            type="button"
+            title="让 AI 基于当前会话重试这条命令"
+            onClick={() => onRetry(entry.command)}
+          >
+            重试此步骤
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -719,6 +968,7 @@ function livePhase(entries: Entry[]): string {
       continue;
     }
     if (entry.kind === "command") {
+      if (entry.state === "pending") return "等待确认…";
       return entry.state === "started" ? "正在执行命令…" : "正在分析执行结果…";
     }
     return "正在思考…";
@@ -764,6 +1014,14 @@ async function writeClipboard(text: string): Promise<void> {
   document.body.removeChild(area);
   if (!ok) {
     throw new Error("浏览器拒绝了剪贴板写入");
+  }
+}
+
+async function copyCommandText(text: string): Promise<void> {
+  try {
+    await writeClipboard(text);
+  } catch (cause) {
+    console.error("command output copy failed", cause);
   }
 }
 
@@ -833,6 +1091,9 @@ function commandMeta(entry: Extract<Entry, { kind: "command" }>): {
   if (entry.state === "started") {
     const timeout = entry.timeoutSeconds ? ` · 超时 ${entry.timeoutSeconds}s` : "";
     return { text: `执行中${timeout}…`, bad: false };
+  }
+  if (entry.state === "pending") {
+    return { text: "等待确认", bad: false };
   }
   if (entry.state === "refused") {
     return { text: `已拒绝：${entry.note ?? "命令被拦截"}`, bad: true };

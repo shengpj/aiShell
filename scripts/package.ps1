@@ -92,9 +92,9 @@ Copy-Item $runtime (Join-Path $out "backend/runtime") -Recurse
 @"
 AI Shell $version
 
-1. Set the DEEPSEEK_API_KEY environment variable before starting AI Shell.
-2. Run ai-shell.exe. It starts its own backend and needs no installed Java.
-3. Hosts, conversations and audit logs live in %APPDATA%\com.aishell.desktop.
+1. Run ai-shell.exe. It starts its own backend and needs no installed Java.
+2. Add a model profile from the AI panel before sending a message.
+3. Hosts, model profiles, conversations and audit logs live in %APPDATA%\com.aishell.desktop.
 
 The backend is backend/backend.jar, run by the Java runtime in backend/runtime.
 "@ | Set-Content -Path (Join-Path $out "README.txt") -Encoding UTF8

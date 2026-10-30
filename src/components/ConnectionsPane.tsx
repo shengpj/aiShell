@@ -16,6 +16,21 @@ import {
   type ProfileView,
 } from "../api/hosts";
 
+type EnvironmentLabel = "" | "production" | "test" | "development";
+type ConnectionMeta = { favorite?: boolean; environment?: EnvironmentLabel };
+type ConnectionMetaMap = Record<string, ConnectionMeta>;
+
+const CONNECTION_META_KEY = "aishell.connection-meta";
+
+function loadConnectionMeta(): ConnectionMetaMap {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CONNECTION_META_KEY) ?? "{}") as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as ConnectionMetaMap) : {};
+  } catch {
+    return {};
+  }
+}
+
 /** One "connection": a host plus the profile (user, key, secret) used to reach it. */
 interface ConnectionForm {
   /** Set when the host is already known (adding a profile or editing one). */
@@ -38,16 +53,25 @@ function message(cause: unknown): string {
 
 export default function ConnectionsPane({
   onConnect,
-  connectedProfileId,
+  connectedProfileIds = [],
 }: {
   onConnect: (connection: ProfileConnection) => void;
-  connectedProfileId?: string | null;
+  connectedProfileIds?: string[];
 }) {
   const [hosts, setHosts] = useState<HostView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [connForm, setConnForm] = useState<ConnectionForm | null>(null);
+  const [connectionMeta, setConnectionMeta] = useState<ConnectionMetaMap>(loadConnectionMeta);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CONNECTION_META_KEY, JSON.stringify(connectionMeta));
+    } catch {
+      // Local preferences are optional; connections remain usable when storage is unavailable.
+    }
+  }, [connectionMeta]);
 
   const load = async (): Promise<boolean> => {
     if (!isTauri()) {
@@ -243,12 +267,32 @@ export default function ConnectionsPane({
     return profile.hasSecret ? "密码 · 已保存" : "密码";
   };
 
+  const metaFor = (profileId: string): ConnectionMeta => connectionMeta[profileId] ?? {};
+
+  const toggleFavorite = (profileId: string) => {
+    setConnectionMeta((current) => {
+      const previous = current[profileId] ?? {};
+      return { ...current, [profileId]: { ...previous, favorite: !previous.favorite } };
+    });
+  };
+
+  const setEnvironment = (profileId: string, environment: EnvironmentLabel) => {
+    setConnectionMeta((current) => {
+      const previous = current[profileId] ?? {};
+      return { ...current, [profileId]: { ...previous, environment } };
+    });
+  };
+
   const usesKey = Boolean(connForm?.privateKeyPath.trim());
   // The backend already orders hosts and profiles newest first; an empty group cannot exist
   // (the host is retired with its last connection).
-  const connections = hosts.flatMap((host) =>
-    host.profiles.map((profile) => ({ host, profile })),
-  );
+  const connections = hosts
+    .flatMap((host) => host.profiles.map((profile) => ({ host, profile })))
+    .sort((left, right) => {
+      const leftMeta = metaFor(left.profile.id);
+      const rightMeta = metaFor(right.profile.id);
+      return Number(Boolean(rightMeta.favorite)) - Number(Boolean(leftMeta.favorite));
+    });
   const editingHost = connForm?.hostId
     ? hosts.find((host) => host.id === connForm.hostId)
     : undefined;
@@ -401,11 +445,11 @@ export default function ConnectionsPane({
           {connections.map(({ host, profile }) => (
             <div
               className={`profile-row${
-                profile.id === connectedProfileId ? " profile-connected" : ""
+                connectedProfileIds.includes(profile.id) ? " profile-connected" : ""
               }`}
               key={profile.id}
             >
-              {profile.id === connectedProfileId && (
+              {connectedProfileIds.includes(profile.id) && (
                 <span className="profile-dot" title="当前已连接" />
               )}
               <button
@@ -426,6 +470,29 @@ export default function ConnectionsPane({
                   {profile.username}@{host.address}:{host.port}
                 </span>
               </button>
+              <button
+                className={`profile-favorite${metaFor(profile.id).favorite ? " profile-favorite-on" : ""}`}
+                type="button"
+                title={metaFor(profile.id).favorite ? "取消收藏" : "收藏连接"}
+                aria-label={metaFor(profile.id).favorite ? "取消收藏" : "收藏连接"}
+                onClick={() => toggleFavorite(profile.id)}
+              >
+                {metaFor(profile.id).favorite ? "★" : "☆"}
+              </button>
+              <select
+                className={`profile-environment profile-environment-${metaFor(profile.id).environment || "none"}`}
+                value={metaFor(profile.id).environment ?? ""}
+                title="设置环境标签"
+                aria-label="设置环境标签"
+                onChange={(event) =>
+                  setEnvironment(profile.id, event.target.value as EnvironmentLabel)
+                }
+              >
+                <option value="">环境</option>
+                <option value="production">生产</option>
+                <option value="test">测试</option>
+                <option value="development">开发</option>
+              </select>
               <div className="profile-actions">
                 <button
                   className="mini"

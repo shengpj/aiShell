@@ -8,6 +8,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -65,6 +68,56 @@ public class AuditLog implements UserCommandListener {
     Map<String, Object> entry = baseEntry("refused", "ai", session, command);
     entry.put("reason", reason);
     append(entry);
+  }
+
+  /** Reads recent command records for the currently connected terminal session. */
+  public History history(String session, String query, int limit) {
+    String needle = query == null ? "" : query.trim().toLowerCase();
+    List<Map<String, Object>> matches = new ArrayList<>();
+    synchronized (lock) {
+      for (int index = maxFiles; index >= 0; index--) {
+        Path candidate = index == 0 ? file : sibling(index);
+        if (!Files.isRegularFile(candidate)) {
+          continue;
+        }
+        try {
+          for (String line : Files.readAllLines(candidate)) {
+            if (line.isBlank()) {
+              continue;
+            }
+            Map<?, ?> parsed;
+            try {
+              parsed = json.readValue(line, Map.class);
+            } catch (RuntimeException e) {
+              log.debug("ignoring malformed audit line in {}", candidate);
+              continue;
+            }
+            if (!"command".equals(parsed.get("kind"))
+                || !session.equals(String.valueOf(parsed.get("session")))) {
+              continue;
+            }
+            String command = String.valueOf(parsed.containsKey("command") ? parsed.get("command") : "");
+            String cwd = String.valueOf(parsed.containsKey("cwd") ? parsed.get("cwd") : "");
+            if (!needle.isEmpty()
+                && !command.toLowerCase().contains(needle)
+                && !cwd.toLowerCase().contains(needle)) {
+              continue;
+            }
+            Map<String, Object> copy = new LinkedHashMap<>();
+            parsed.forEach((key, value) -> copy.put(String.valueOf(key), value));
+            matches.add(copy);
+          }
+        } catch (IOException e) {
+          log.debug("failed to read audit history from {}", candidate, e);
+        }
+      }
+    }
+    Collections.reverse(matches);
+    boolean truncated = matches.size() > limit;
+    if (truncated) {
+      matches = new ArrayList<>(matches.subList(0, limit));
+    }
+    return new History(matches, truncated);
   }
 
   /** A command the user typed in a shell with the audit hook (ADR 0010). */
@@ -134,4 +187,6 @@ public class AuditLog implements UserCommandListener {
     }
     return text.substring(0, OUTPUT_LIMIT) + "… (truncated)";
   }
+
+  public record History(List<Map<String, Object>> entries, boolean truncated) {}
 }

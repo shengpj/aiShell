@@ -11,6 +11,8 @@ public class AiProperties {
 
   private int commandTimeoutSeconds = 120;
   private int turnTimeoutSeconds = 300;
+  private int approvalTimeoutSeconds = 300;
+  private AiExecutionPolicy executionPolicy = AiExecutionPolicy.AUTO;
   private List<String> denyPatterns = new ArrayList<>();
 
   public int getCommandTimeoutSeconds() {
@@ -27,6 +29,22 @@ public class AiProperties {
 
   public void setTurnTimeoutSeconds(int turnTimeoutSeconds) {
     this.turnTimeoutSeconds = turnTimeoutSeconds;
+  }
+
+  public int getApprovalTimeoutSeconds() {
+    return approvalTimeoutSeconds;
+  }
+
+  public void setApprovalTimeoutSeconds(int approvalTimeoutSeconds) {
+    this.approvalTimeoutSeconds = approvalTimeoutSeconds;
+  }
+
+  public AiExecutionPolicy getExecutionPolicy() {
+    return executionPolicy;
+  }
+
+  public void setExecutionPolicy(AiExecutionPolicy executionPolicy) {
+    this.executionPolicy = executionPolicy;
   }
 
   public List<String> getDenyPatterns() {

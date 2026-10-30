@@ -29,6 +29,8 @@ ai-shell:
   ai:
     command-timeout-seconds: 120
     turn-timeout-seconds: 300
+    approval-timeout-seconds: 300
+    execution-policy: auto
     deny-patterns:
       - '\brm\s+(-\S+\s+)*/(\s|$)'
       - '\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(-\S+\s+)*(/|~|\$HOME|\*)(\s|$)'

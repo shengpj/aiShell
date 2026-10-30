@@ -1,6 +1,7 @@
 package com.aishell.chat;
 
 import com.aishell.terminal.TerminalSessions;
+import com.aishell.chat.command.CommandApproval;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -19,12 +20,17 @@ public class ChatController {
   private final ChatService chats;
   private final TerminalSessions terminals;
   private final ConversationStore conversations;
+  private final CommandApproval approvals;
 
   public ChatController(
-      ChatService chats, TerminalSessions terminals, ConversationStore conversations) {
+      ChatService chats,
+      TerminalSessions terminals,
+      ConversationStore conversations,
+      CommandApproval approvals) {
     this.chats = chats;
     this.terminals = terminals;
     this.conversations = conversations;
+    this.approvals = approvals;
   }
 
   @PostMapping(value = "/api/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -41,7 +47,19 @@ public class ChatController {
     String conversation = conversationOf(request.session());
     return chats.start(
         conversation, request.session(), request.message().trim(), request.turn(),
-        request.modelId());
+        request.modelId(), request.executionPolicy());
+  }
+
+  @PostMapping("/api/chat/command-decision")
+  public Map<String, Object> commandDecision(
+      @RequestBody(required = false) CommandDecisionRequest request) {
+    if (request == null || request.token() == null || request.token().isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "approval token is required");
+    }
+    if (!approvals.resolve(request.token().trim(), request.approved())) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "command approval is no longer pending");
+    }
+    return Map.of("accepted", true);
   }
 
   @PostMapping("/api/chat/delete")
@@ -96,6 +114,7 @@ public class ChatController {
 
   @PostMapping("/api/agent/stop")
   public Map<String, Object> stop() {
+    approvals.cancelAll();
     return Map.of("stopped", terminals.stopAllAi());
   }
 
@@ -107,7 +126,10 @@ public class ChatController {
     return conversations.current(hostKeyOf(session));
   }
 
-  public record ChatRequest(String session, String message, String turn, String modelId) {}
+  public record ChatRequest(
+      String session, String message, String turn, String modelId, String executionPolicy) {}
+
+  public record CommandDecisionRequest(String token, boolean approved) {}
 
   public record DeleteRequest(String session, String turn) {}
 

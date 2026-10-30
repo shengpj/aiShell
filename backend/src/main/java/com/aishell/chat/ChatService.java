@@ -1,7 +1,9 @@
 package com.aishell.chat;
 
 import com.aishell.chat.command.AiCommandGuard;
+import com.aishell.chat.command.AiExecutionPolicy;
 import com.aishell.chat.command.AiProperties;
+import com.aishell.chat.command.CommandApproval;
 import com.aishell.chat.command.RunCommandTool;
 import com.aishell.model.ChatModels;
 import com.aishell.terminal.TerminalBridge;
@@ -73,6 +75,7 @@ public class ChatService {
   private final AiProperties properties;
   private final SqliteAgentSessionService sessions;
   private final ChatTranscriptStore transcript;
+  private final CommandApproval approvals;
   private final Set<String> active = ConcurrentHashMap.newKeySet();
 
   public ChatService(
@@ -83,7 +86,8 @@ public class ChatService {
       ObjectMapper json,
       AiProperties properties,
       SqliteAgentSessionService sessions,
-      ChatTranscriptStore transcript) {
+      ChatTranscriptStore transcript,
+      CommandApproval approvals) {
     this.models = models;
     this.terminals = terminals;
     this.guard = guard;
@@ -92,6 +96,7 @@ public class ChatService {
     this.properties = properties;
     this.sessions = sessions;
     this.transcript = transcript;
+    this.approvals = approvals;
   }
 
   /** True while a turn is streaming for this terminal session. */
@@ -100,8 +105,15 @@ public class ChatService {
   }
 
   public SseEmitter start(
-      String conversationId, String sessionId, String message, String turn, String modelId) {
+      String conversationId,
+      String sessionId,
+      String message,
+      String turn,
+      String modelId,
+      String requestedPolicy) {
     SpringAI turnModel = models.forTurn(modelId);
+    AiExecutionPolicy policy =
+        AiExecutionPolicy.parse(requestedPolicy, properties.getExecutionPolicy());
     if (!active.add(sessionId)) {
       throw new ResponseStatusException(
           HttpStatus.CONFLICT, "a chat turn is already running for this session");
@@ -155,7 +167,8 @@ public class ChatService {
                     finished,
                     subscription,
                     turnDone,
-                    turnModel));
+                    turnModel,
+                    policy));
     return emitter;
   }
 
@@ -217,7 +230,11 @@ public class ChatService {
             transcript.recordAiText(conversationId, turnId, text);
           }
         }
-        case "command" -> transcript.recordCommand(conversationId, turnId, payload);
+        case "command" -> {
+          if (!"pending".equals(payload.get("state"))) {
+            transcript.recordCommand(conversationId, turnId, payload);
+          }
+        }
         case "error" -> {
           if (payload.get("message") instanceof String text) {
             transcript.recordError(conversationId, turnId, text);
@@ -239,6 +256,7 @@ public class ChatService {
     if (disposable != null) {
       disposable.dispose();
     }
+    approvals.cancelSession(sessionId);
     terminals.findOpen(sessionId).ifPresent(TerminalBridge::cancelAiCommand);
   }
 
@@ -250,7 +268,8 @@ public class ChatService {
       CompletableFuture<Void> finished,
       AtomicReference<Disposable> subscription,
       java.util.concurrent.atomic.AtomicBoolean turnDone,
-      SpringAI model) {
+      SpringAI model,
+      AiExecutionPolicy policy) {
     try {
       if (finished.isDone()) {
         return;
@@ -264,7 +283,10 @@ public class ChatService {
               guard,
               audit,
               channel,
-              Duration.ofSeconds(properties.getCommandTimeoutSeconds()));
+              Duration.ofSeconds(properties.getCommandTimeoutSeconds()),
+              Duration.ofSeconds(properties.getApprovalTimeoutSeconds()),
+              policy,
+              approvals);
       LlmAgent agent =
           LlmAgent.builder()
               .name("ops_assistant")

@@ -69,4 +69,21 @@ class AuditLogTest {
     assertThat(entry.path("output").asText()).isEqualTo("out");
     assertThat(entry.has("cwd")).isFalse();
   }
+
+  @Test
+  void readsRecentCommandsForOneSessionAndFiltersByQuery() throws Exception {
+    AuditLog log = new AuditLog(new ObjectMapper(), dir.toString());
+
+    log.onUserCommand("s1", "pwd", 0, "/root");
+    log.onUserCommand("s2", "echo other", 0, "/tmp");
+    log.recordCommand(
+        "s1", "false", new AiCommandResult(AiCommandResult.Status.COMPLETED, 1, "failed", null, 4));
+
+    AuditLog.History result = log.history("s1", "false", 100);
+
+    assertThat(result.truncated()).isFalse();
+    assertThat(result.entries()).hasSize(1);
+    assertThat(result.entries().getFirst()).containsEntry("command", "false");
+    assertThat(result.entries().getFirst()).containsEntry("initiator", "ai");
+  }
 }

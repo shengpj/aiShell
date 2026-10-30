@@ -26,6 +26,11 @@ const RIGHT_RANGE = { min: 280, max: 640 };
 const CENTER_MIN = 420;
 
 type Layout = { left: number; right: number };
+type WorkspaceTab = {
+  id: string;
+  connection: ProfileConnection & { nonce: number };
+  sessionId: string | null;
+};
 
 const DEFAULT_LAYOUT: Layout = { left: 240, right: 360 };
 
@@ -58,10 +63,9 @@ export default function App() {
   const [info, setInfo] = useState<BackendInfo | null>(null);
   const [health, setHealth] = useState<BackendHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [connection, setConnection] = useState<(ProfileConnection & { nonce: number }) | null>(
-    null,
-  );
+  const [tabs, setTabs] = useState<WorkspaceTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [aiPrefill, setAiPrefill] = useState<{ tabId: string; prompt: string } | null>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const dragRef = useRef<{ side: "left" | "right"; startX: number; start: Layout } | null>(null);
   const [layout, setLayout] = useState(loadLayout);
@@ -169,6 +173,41 @@ export default function App() {
     }
   };
 
+  const openConnection = (next: ProfileConnection) => {
+    const existing = tabs.find((tab) => tab.connection.profileId === next.profileId);
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+    const id = `${next.profileId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tab: WorkspaceTab = {
+      id,
+      connection: { ...next, nonce: Date.now() },
+      sessionId: null,
+    };
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(id);
+  };
+
+  const updateSession = (tabId: string, sessionId: string | null) => {
+    setTabs((current) =>
+      current.map((tab) => (tab.id === tabId ? { ...tab, sessionId } : tab)),
+    );
+  };
+
+  const closeTab = (tabId: string) => {
+    const index = tabs.findIndex((tab) => tab.id === tabId);
+    const next = tabs.filter((tab) => tab.id !== tabId);
+    setTabs(next);
+    if (activeTabId === tabId) {
+      setActiveTabId(next[index]?.id ?? next[index - 1]?.id ?? null);
+    }
+  };
+
+  const connectedProfileIds = tabs
+    .filter((tab) => tab.sessionId)
+    .map((tab) => tab.connection.profileId);
+
   return (
     <div className="shell">
       <header className="titlebar">
@@ -189,8 +228,8 @@ export default function App() {
         }
       >
         <ConnectionsPane
-          connectedProfileId={sessionId ? connection?.profileId ?? null : null}
-          onConnect={(next) => setConnection({ ...next, nonce: Date.now() })}
+          connectedProfileIds={connectedProfileIds}
+          onConnect={openConnection}
         />
         <div
           className="splitter"
@@ -203,8 +242,60 @@ export default function App() {
           onPointerCancel={endDrag}
         />
         <section className="center">
-          <TerminalPane connection={connection} onSessionChange={setSessionId} />
-          <FileTreePane sessionId={sessionId} />
+          <div className="session-tabs" role="tablist" aria-label="终端会话">
+            {tabs.map((tab) => (
+              <div
+                className={`session-tab${tab.id === activeTabId ? " session-tab-active" : ""}`}
+                key={tab.id}
+                role="presentation"
+              >
+                <button
+                  className="session-tab-main"
+                  type="button"
+                  role="tab"
+                  aria-selected={tab.id === activeTabId}
+                  onClick={() => setActiveTabId(tab.id)}
+                >
+                  <span className="session-tab-title">{tab.connection.user}@{tab.connection.host}</span>
+                  <span className={`session-tab-status${tab.sessionId ? " session-tab-status-on" : ""}`} />
+                </button>
+                <button
+                  className="session-tab-close"
+                  type="button"
+                  title="关闭会话"
+                  aria-label={`关闭 ${tab.connection.user}@${tab.connection.host}`}
+                  onClick={() => closeTab(tab.id)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {tabs.length === 0 && <span className="session-tabs-empty">未打开会话</span>}
+          </div>
+          {tabs.length === 0 ? (
+            <>
+              <TerminalPane connection={null} />
+              <FileTreePane sessionId={null} />
+            </>
+          ) : (
+            tabs.map((tab) => (
+              <div
+                className={`workspace-tab-content${tab.id === activeTabId ? " workspace-tab-content-active" : ""}`}
+                key={tab.id}
+                aria-hidden={tab.id !== activeTabId}
+              >
+                <TerminalPane
+                  connection={tab.connection}
+                  onSessionChange={(sessionId) => updateSession(tab.id, sessionId)}
+                  onAskAi={(prompt) => {
+                    setActiveTabId(tab.id);
+                    setAiPrefill({ tabId: tab.id, prompt });
+                  }}
+                />
+                <FileTreePane sessionId={tab.sessionId} />
+              </div>
+            ))
+          )}
         </section>
         <div
           className="splitter"
@@ -216,7 +307,26 @@ export default function App() {
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
         />
-        <ChatPane sessionId={sessionId} backendReady={info?.status === "ready"} />
+        <section className="chat-workspace">
+          {tabs.length === 0 ? (
+            <ChatPane sessionId={null} backendReady={info?.status === "ready"} />
+          ) : (
+            tabs.map((tab) => (
+              <div
+                className={`workspace-chat-content${tab.id === activeTabId ? " workspace-chat-content-active" : ""}`}
+                key={tab.id}
+                aria-hidden={tab.id !== activeTabId}
+              >
+                <ChatPane
+                  sessionId={tab.sessionId}
+                  backendReady={info?.status === "ready"}
+                  prefill={aiPrefill?.tabId === tab.id ? aiPrefill.prompt : null}
+                  onPrefillConsumed={() => setAiPrefill(null)}
+                />
+              </div>
+            ))
+          )}
+        </section>
       </main>
 
       <StatusBar preview={preview} info={info} health={health} />

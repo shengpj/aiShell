@@ -19,6 +19,9 @@ public final class RunCommandTool {
   private final AuditLog audit;
   private final ChatChannel channel;
   private final Duration timeout;
+  private final Duration approvalTimeout;
+  private final AiExecutionPolicy policy;
+  private final CommandApproval approvals;
 
   public RunCommandTool(
       String sessionId,
@@ -26,13 +29,19 @@ public final class RunCommandTool {
       AiCommandGuard guard,
       AuditLog audit,
       ChatChannel channel,
-      Duration timeout) {
+      Duration timeout,
+      Duration approvalTimeout,
+      AiExecutionPolicy policy,
+      CommandApproval approvals) {
     this.sessionId = sessionId;
     this.sessions = sessions;
     this.guard = guard;
     this.audit = audit;
     this.channel = channel;
     this.timeout = timeout;
+    this.approvalTimeout = approvalTimeout;
+    this.policy = policy;
+    this.approvals = approvals;
   }
 
   public Map<String, Object> runCommand(String command) {
@@ -59,9 +68,42 @@ public final class RunCommandTool {
       return result;
     }
 
-    channel.send(
-        "command",
-        Map.of("state", "started", "command", command, "timeoutSeconds", timeout.toSeconds()));
+    if (policy == AiExecutionPolicy.EXPLAIN) {
+      String reason = "command execution is disabled by the current policy; explain the command instead";
+      audit.recordRefusal(sessionId, command, reason);
+      channel.send("command", Map.of("state", "refused", "command", command, "reason", reason));
+      result.put("status", "refused");
+      result.put("reason", reason);
+      return result;
+    }
+
+    String approvalToken = null;
+    if (policy == AiExecutionPolicy.CONFIRM) {
+      CommandApproval.Decision decision =
+          approvals.await(sessionId, command, channel, approvalTimeout);
+      approvalToken = decision.token();
+      if (!decision.approved()) {
+        audit.recordRefusal(sessionId, command, decision.reason());
+        Map<String, Object> refused = new LinkedHashMap<>();
+        refused.put("state", "refused");
+        refused.put("command", command);
+        refused.put("reason", decision.reason());
+        refused.put("approvalToken", approvalToken);
+        channel.send("command", refused);
+        result.put("status", "refused");
+        result.put("reason", decision.reason());
+        return result;
+      }
+    }
+
+    Map<String, Object> started = new LinkedHashMap<>();
+    started.put("state", "started");
+    started.put("command", command);
+    started.put("timeoutSeconds", timeout.toSeconds());
+    if (approvalToken != null) {
+      started.put("approvalToken", approvalToken);
+    }
+    channel.send("command", started);
 
     AiCommandResult outcome = bridge.runAiCommand(command, timeout);
     audit.recordCommand(sessionId, command, outcome);
@@ -72,6 +114,12 @@ public final class RunCommandTool {
     finished.put("status", outcome.status().name().toLowerCase());
     finished.put("exitCode", outcome.exitCode());
     finished.put("durationMs", outcome.durationMs());
+    if (!outcome.output().isEmpty()) {
+      finished.put("output", outcome.output());
+    }
+    if (approvalToken != null) {
+      finished.put("approvalToken", approvalToken);
+    }
     if (outcome.message() != null) {
       finished.put("message", outcome.message());
     }
