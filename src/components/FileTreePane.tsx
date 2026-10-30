@@ -1,7 +1,10 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { confirmAction } from "../api/confirm";
 import {
+  downloadFile,
   listFiles,
   previewFile,
+  writeTextFile,
   type FileEntry,
   type FileListing,
   type FilePreview,
@@ -114,6 +117,10 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [fileActionBusy, setFileActionBusy] = useState(false);
+  const [fileActionError, setFileActionError] = useState<string | null>(null);
 
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
@@ -198,6 +205,10 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
     setPreviewPath(null);
     setPreview(null);
     setPreviewError(null);
+    setEditText("");
+    setEditing(false);
+    setFileActionBusy(false);
+    setFileActionError(null);
     void loadDir(sessionId, path);
     void reveal(sessionId, path);
   };
@@ -272,10 +283,14 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
     setPreviewPath(entry.path);
     setPreview(null);
     setPreviewError(null);
+      setEditText("");
+      setEditing(false);
+      setFileActionError(null);
     try {
       const result = await previewFile(sessionId, entry.path);
       if (previewRequest.current === token && sessionRef.current === sessionId) {
         setPreview(result);
+        setEditText(result.kind === "text" ? (result.text ?? "") : "");
       }
     } catch (cause) {
       if (previewRequest.current === token) {
@@ -289,6 +304,86 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
     setPreviewPath(null);
     setPreview(null);
     setPreviewError(null);
+    setEditText("");
+    setEditing(false);
+    setFileActionError(null);
+  };
+
+  const startEditing = () => {
+    if (preview?.kind !== "text") {
+      return;
+    }
+    setEditText(preview.text ?? "");
+    setFileActionError(null);
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setEditText(preview?.text ?? "");
+    setFileActionError(null);
+    setEditing(false);
+  };
+
+  const saveEditing = async () => {
+    if (!sessionId || !preview || preview.kind !== "text" || fileActionBusy) {
+      return;
+    }
+    if (
+      !(await confirmAction(
+        `保存远程文件？\n\n${preview.path}\n\n这会覆盖当前文件内容，并写入审计日志。`,
+        "保存远程文件",
+        "保存",
+      ))
+    ) {
+      return;
+    }
+    setFileActionBusy(true);
+    setFileActionError(null);
+    try {
+      const result = await writeTextFile(sessionId, preview.path, editText, preview.modifiedAt);
+      setPreview((current) =>
+        current
+          ? {
+              ...current,
+              text: editText,
+              size: result.size,
+              modifiedAt: result.modifiedAt,
+              truncated: false,
+            }
+          : current,
+      );
+      setEditing(false);
+      setNotice(`已保存 ${preview.path}（${formatSize(result.size)}），写入已记入审计日志。`);
+      void loadDir(sessionId, cwd);
+    } catch (cause) {
+      setFileActionError(message(cause));
+    } finally {
+      setFileActionBusy(false);
+    }
+  };
+
+  const downloadPreview = async () => {
+    if (!sessionId || !preview || fileActionBusy) {
+      return;
+    }
+    setFileActionBusy(true);
+    setFileActionError(null);
+    try {
+      const blob = await downloadFile(sessionId, preview.path);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = preview.path.slice(preview.path.lastIndexOf("/") + 1) || "download";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setNotice(`已下载 ${preview.path}，下载动作已记入审计日志。`);
+    } catch (cause) {
+      setFileActionError(message(cause));
+    } finally {
+      setFileActionBusy(false);
+    }
   };
 
   const askAiAboutPreview = () => {
@@ -346,9 +441,9 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
         <span>文件</span>
         <span
           className="filetree-readonly"
-          title="只读：不提供上传、下载、删除或在线编辑，避免绕过审计的写路径"
+          title="受控：下载和文本编辑都经过当前会话、大小限制、版本检查与审计"
         >
-          只读
+          受控
         </span>
         <button
           className="icon-button"
@@ -479,7 +574,44 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
               {previewPath}
             </span>
             {preview && <span className="file-preview-meta">{formatSize(preview.size)}</span>}
-            {preview?.kind === "text" && (
+            {preview && (
+              <button
+                className="ghost-button"
+                type="button"
+                title="下载当前远程文件"
+                onClick={() => void downloadPreview()}
+                disabled={fileActionBusy || editing}
+              >
+                下载
+              </button>
+            )}
+            {preview?.kind === "text" && !editing && (
+              <button
+                className="ghost-button"
+                type="button"
+                title="编辑当前文本文件"
+                onClick={startEditing}
+                disabled={fileActionBusy}
+              >
+                编辑
+              </button>
+            )}
+            {preview?.kind === "text" && editing && (
+              <>
+                <button
+                  className="connect-button"
+                  type="button"
+                  onClick={() => void saveEditing()}
+                  disabled={fileActionBusy}
+                >
+                  {fileActionBusy ? "保存中…" : "保存"}
+                </button>
+                <button className="ghost-button" type="button" onClick={cancelEditing} disabled={fileActionBusy}>
+                  取消
+                </button>
+              </>
+            )}
+            {preview?.kind === "text" && !editing && (
               <button
                 className="ghost-button"
                 type="button"
@@ -495,8 +627,18 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
           </div>
           <div className="file-preview-body">
             {previewError && <p className="conn-error">{previewError}</p>}
+            {fileActionError && <p className="conn-error">{fileActionError}</p>}
             {!preview && !previewError && <p className="empty-hint">读取文件…</p>}
-            {preview?.kind === "text" && <pre className="preview-text">{preview.text}</pre>}
+            {preview?.kind === "text" && editing && (
+              <textarea
+                className="preview-editor"
+                value={editText}
+                onChange={(event) => setEditText(event.target.value)}
+                spellCheck={false}
+                aria-label="编辑远程文件内容"
+              />
+            )}
+            {preview?.kind === "text" && !editing && <pre className="preview-text">{preview.text}</pre>}
             {preview?.kind === "image" && preview.data && (
               <img
                 className="preview-image"

@@ -39,6 +39,7 @@ class FileServiceSftpTest {
     Files.createDirectories(root.resolve("dirA/sub"));
     Files.writeString(root.resolve("dirA/sub/file.txt"), "nested\n");
     Files.writeString(root.resolve("notes.txt"), "你好 SFTP\nline2\n");
+    Files.writeString(root.resolve("editable.txt"), "before\n");
     Files.write(root.resolve("bin.dat"), new byte[] {'a', 0, 'b'});
     Files.write(root.resolve("pic.png"), PNG);
     byte[] large = new byte[300_000];
@@ -160,6 +161,40 @@ class FileServiceSftpTest {
   @Test
   void marksBinaryFiles() {
     assertThat(files.preview(session, "/bin.dat").kind()).isEqualTo("binary");
+  }
+
+  @Test
+  void writesExistingUtf8TextWithVersionCheck() {
+    FilePreview before = files.preview(session, "/editable.txt");
+
+    FileService.FileWriteResult result =
+        files.writeText(session, "/editable.txt", "updated\n", before.modifiedAt());
+
+    assertThat(result.path()).isEqualTo("/editable.txt");
+    assertThat(files.preview(session, "/editable.txt").text()).isEqualTo("updated\n");
+  }
+
+  @Test
+  void rejectsStaleTextWrite() {
+    FilePreview before = files.preview(session, "/editable.txt");
+
+    assertThatThrownBy(
+            () -> files.writeText(session, "/editable.txt", "stale\n", before.modifiedAt() + 1))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(
+            error ->
+                assertThat(((ResponseStatusException) error).getStatusCode())
+                    .isEqualTo(HttpStatus.CONFLICT));
+  }
+
+  @Test
+  void downloadsBoundedFile() {
+    FileService.FileDownload download = files.download(session, "/notes.txt");
+
+    assertThat(download.name()).isEqualTo("notes.txt");
+    assertThat(download.mime()).startsWith("text/plain");
+    assertThat(new String(download.data(), java.nio.charset.StandardCharsets.UTF_8))
+        .isEqualTo("你好 SFTP\nline2\n");
   }
 
   @Test

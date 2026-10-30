@@ -70,6 +70,20 @@ public class AuditLog implements UserCommandListener {
     append(entry);
   }
 
+  public void recordFileWrite(String session, String path, long size) {
+    Map<String, Object> entry = baseEntry("file_write", "user", session, path);
+    entry.put("path", path);
+    entry.put("size", size);
+    append(entry);
+  }
+
+  public void recordFileDownload(String session, String path, long size) {
+    Map<String, Object> entry = baseEntry("file_download", "user", session, path);
+    entry.put("path", path);
+    entry.put("size", size);
+    append(entry);
+  }
+
   /** Reads recent command records for the currently connected terminal session. */
   public History history(String session, String query, int limit) {
     String needle = query == null ? "" : query.trim().toLowerCase();

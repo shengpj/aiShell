@@ -5,6 +5,7 @@ import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
 import com.jcraft.jsch.SftpATTRS;
 import com.jcraft.jsch.SftpException;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -21,13 +22,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Vector;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Read-only remote file access over an SFTP channel opened on the terminal's SSH session (ADR
- * 0009). Listings are lazy and capped; previews only read a bounded prefix of a file.
+ * Remote file access over an SFTP channel opened on the terminal's SSH session. Listings and
+ * previews are bounded; writes are restricted to existing UTF-8 text files and use optimistic
+ * version checking.
  */
 @Service
 public class FileService {
@@ -48,10 +51,15 @@ public class FileService {
       String path,
       String kind,
       long size,
+      long modifiedAt,
       String mime,
       String text,
       String data,
       boolean truncated) {}
+
+  public record FileWriteResult(String path, long size, long modifiedAt) {}
+
+  public record FileDownload(String path, String name, String mime, byte[] data) {}
 
   static final int MAX_ENTRIES = 2000;
   static final int TEXT_LIMIT = 256 * 1024;
@@ -117,7 +125,7 @@ public class FileService {
     String target = path.trim();
     ChannelSftp channel = open(session);
     try {
-      SftpATTRS attrs = channel.stat(target);
+      SftpATTRS attrs = channel.lstat(target);
       if (attrs.isDir()) {
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "path is a directory");
       }
@@ -128,11 +136,18 @@ public class FileService {
       String mime = imageMime(target);
       if (mime != null) {
         if (size > IMAGE_LIMIT) {
-          return new FilePreview(target, "too-large", size, mime, null, null, false);
+          return new FilePreview(target, "too-large", size, attrs.getMTime(), mime, null, null, false);
         }
         byte[] data = read(channel, target, IMAGE_LIMIT);
         return new FilePreview(
-            target, "image", size, mime, null, Base64.getEncoder().encodeToString(data), false);
+            target,
+            "image",
+            size,
+            attrs.getMTime(),
+            mime,
+            null,
+            Base64.getEncoder().encodeToString(data),
+            false);
       }
       byte[] bytes = read(channel, target, TEXT_LIMIT + 1);
       boolean truncated = bytes.length > TEXT_LIMIT;
@@ -140,14 +155,92 @@ public class FileService {
         bytes = Arrays.copyOf(bytes, TEXT_LIMIT);
       }
       if (containsNul(bytes)) {
-        return new FilePreview(target, "binary", size, null, null, null, false);
+        return new FilePreview(target, "binary", size, attrs.getMTime(), null, null, null, false);
       }
       String text = decodeUtf8(bytes, truncated);
       if (text == null) {
-        return new FilePreview(target, "binary", size, null, null, null, false);
+        return new FilePreview(target, "binary", size, attrs.getMTime(), null, null, null, false);
       }
       return new FilePreview(
-          target, "text", size, "text/plain; charset=utf-8", text, null, truncated);
+          target, "text", size, attrs.getMTime(), "text/plain; charset=utf-8", text, null, truncated);
+    } catch (SftpException e) {
+      throw failure(e, target);
+    } catch (IOException e) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_GATEWAY, "failed to read " + target + ": " + e.getMessage(), e);
+    } finally {
+      channel.disconnect();
+    }
+  }
+
+  public FileWriteResult writeText(
+      Session session, String path, String content, Long expectedModifiedAt) {
+    if (path == null || path.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "path is required");
+    }
+    if (content == null) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "content is required");
+    }
+    byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+    if (bytes.length > TEXT_LIMIT) {
+      throw new ResponseStatusException(
+          HttpStatus.PAYLOAD_TOO_LARGE, "text file is limited to " + TEXT_LIMIT + " bytes");
+    }
+    String target = path.trim();
+    ChannelSftp channel = open(session);
+    String temporary = target + ".aishell-tmp-" + UUID.randomUUID();
+    try {
+      SftpATTRS attrs = channel.lstat(target);
+      if (!attrs.isReg() || attrs.isLink()) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "path is not a regular file");
+      }
+      if (expectedModifiedAt != null && expectedModifiedAt >= 0 && attrs.getMTime() != expectedModifiedAt) {
+        throw new ResponseStatusException(
+            HttpStatus.CONFLICT, "file changed on the remote host; reload it before saving");
+      }
+      channel.put(new ByteArrayInputStream(bytes), temporary, ChannelSftp.OVERWRITE);
+      channel.chmod(attrs.getPermissions(), temporary);
+      channel.rename(temporary, target);
+      SftpATTRS saved = channel.stat(target);
+      return new FileWriteResult(target, saved.getSize(), saved.getMTime());
+    } catch (ResponseStatusException e) {
+      throw e;
+    } catch (SftpException e) {
+      throw failure(e, target);
+    } finally {
+      try {
+        channel.rm(temporary);
+      } catch (SftpException ignored) {
+        // The temporary file is already gone after a successful rename.
+      }
+      channel.disconnect();
+    }
+  }
+
+  public FileDownload download(Session session, String path) {
+    if (path == null || path.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "path is required");
+    }
+    String target = path.trim();
+    ChannelSftp channel = open(session);
+    try {
+      SftpATTRS attrs = channel.lstat(target);
+      if (!attrs.isReg() || attrs.isLink()) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "path is not a regular file");
+      }
+      if (attrs.getSize() > IMAGE_LIMIT) {
+        throw new ResponseStatusException(
+            HttpStatus.PAYLOAD_TOO_LARGE, "download is limited to " + IMAGE_LIMIT + " bytes");
+      }
+      byte[] data = read(channel, target, IMAGE_LIMIT + 1);
+      if (data.length > IMAGE_LIMIT) {
+        throw new ResponseStatusException(
+            HttpStatus.PAYLOAD_TOO_LARGE, "download is limited to " + IMAGE_LIMIT + " bytes");
+      }
+      String name = target.substring(target.lastIndexOf('/') + 1);
+      return new FileDownload(target, name.isBlank() ? "download" : name, downloadMime(target), data);
+    } catch (ResponseStatusException e) {
+      throw e;
     } catch (SftpException e) {
       throw failure(e, target);
     } catch (IOException e) {
@@ -218,6 +311,21 @@ public class FileService {
       return null;
     }
     return IMAGE_TYPES.get(path.substring(dot + 1).toLowerCase(Locale.ROOT));
+  }
+
+  private static String downloadMime(String path) {
+    String image = imageMime(path);
+    if (image != null) {
+      return image;
+    }
+    String lower = path.toLowerCase(Locale.ROOT);
+    if (lower.endsWith(".json")) return "application/json";
+    if (lower.endsWith(".xml")) return "application/xml";
+    if (lower.endsWith(".csv")) return "text/csv";
+    if (lower.endsWith(".log") || lower.endsWith(".txt") || lower.endsWith(".conf")) {
+      return "text/plain; charset=utf-8";
+    }
+    return "application/octet-stream";
   }
 
   private static String typeOf(SftpATTRS attrs) {
