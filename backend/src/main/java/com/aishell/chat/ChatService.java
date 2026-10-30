@@ -3,6 +3,7 @@ package com.aishell.chat;
 import com.aishell.chat.command.AiCommandGuard;
 import com.aishell.chat.command.AiProperties;
 import com.aishell.chat.command.RunCommandTool;
+import com.aishell.model.ChatModels;
 import com.aishell.terminal.TerminalBridge;
 import com.aishell.terminal.TerminalSessions;
 import com.google.adk.agents.LlmAgent;
@@ -64,7 +65,7 @@ public class ChatService {
       - Answer in the user's language.
       """;
 
-  private final SpringAI model;
+  private final ChatModels models;
   private final TerminalSessions terminals;
   private final AiCommandGuard guard;
   private final AuditLog audit;
@@ -75,7 +76,7 @@ public class ChatService {
   private final Set<String> active = ConcurrentHashMap.newKeySet();
 
   public ChatService(
-      SpringAI model,
+      ChatModels models,
       TerminalSessions terminals,
       AiCommandGuard guard,
       AuditLog audit,
@@ -83,7 +84,7 @@ public class ChatService {
       AiProperties properties,
       SqliteAgentSessionService sessions,
       ChatTranscriptStore transcript) {
-    this.model = model;
+    this.models = models;
     this.terminals = terminals;
     this.guard = guard;
     this.audit = audit;
@@ -98,7 +99,9 @@ public class ChatService {
     return active.contains(sessionId);
   }
 
-  public SseEmitter start(String conversationId, String sessionId, String message, String turn) {
+  public SseEmitter start(
+      String conversationId, String sessionId, String message, String turn, String modelId) {
+    SpringAI turnModel = models.forTurn(modelId);
     if (!active.add(sessionId)) {
       throw new ResponseStatusException(
           HttpStatus.CONFLICT, "a chat turn is already running for this session");
@@ -145,7 +148,14 @@ public class ChatService {
         .start(
             () ->
                 runTurn(
-                    conversationId, sessionId, message, channel, finished, subscription, turnDone));
+                    conversationId,
+                    sessionId,
+                    message,
+                    channel,
+                    finished,
+                    subscription,
+                    turnDone,
+                    turnModel));
     return emitter;
   }
 
@@ -239,7 +249,8 @@ public class ChatService {
       ChatChannel channel,
       CompletableFuture<Void> finished,
       AtomicReference<Disposable> subscription,
-      java.util.concurrent.atomic.AtomicBoolean turnDone) {
+      java.util.concurrent.atomic.AtomicBoolean turnDone,
+      SpringAI model) {
     try {
       if (finished.isDone()) {
         return;

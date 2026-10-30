@@ -29,7 +29,7 @@ export default function StatusBar({ preview, info, health }: StatusBarProps) {
         {backendLabel(preview, info)}
       </span>
       <span className="status-meta">
-        {health ? `${health.model} · ` : ""}AI Shell 0.1.0
+        {health?.model ? `${health.model} · ` : ""}AI Shell 0.1.0
       </span>
     </footer>
   );

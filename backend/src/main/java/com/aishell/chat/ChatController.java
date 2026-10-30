@@ -39,7 +39,9 @@ public class ChatController {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "terminal session is not connected");
     }
     String conversation = conversationOf(request.session());
-    return chats.start(conversation, request.session(), request.message().trim(), request.turn());
+    return chats.start(
+        conversation, request.session(), request.message().trim(), request.turn(),
+        request.modelId());
   }
 
   @PostMapping("/api/chat/delete")
@@ -105,7 +107,7 @@ public class ChatController {
     return conversations.current(hostKeyOf(session));
   }
 
-  public record ChatRequest(String session, String message, String turn) {}
+  public record ChatRequest(String session, String message, String turn, String modelId) {}
 
   public record DeleteRequest(String session, String turn) {}
 

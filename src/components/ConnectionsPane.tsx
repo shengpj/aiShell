@@ -1,6 +1,7 @@
-import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import { getBackendInfo, isTauri } from "../api/backend";
+import { confirmDestructive } from "../api/confirm";
 import {
   createHost,
   createProfile,
@@ -33,28 +34,6 @@ interface ConnectionForm {
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
-}
-
-/**
- * WebView2 does not implement blocking `window.confirm` inside Tauri (it resolves immediately),
- * so destructive actions must use the native dialog plugin. If that dialog fails for any reason,
- * deny the action instead of deleting without confirmation.
- */
-async function ask(message: string, title: string): Promise<boolean> {
-  if (!isTauri()) {
-    return window.confirm(message);
-  }
-  try {
-    return await confirmDialog(message, {
-      title,
-      kind: "warning",
-      okLabel: "删除",
-      cancelLabel: "取消",
-    });
-  } catch (cause) {
-    console.error("confirmation dialog failed", cause);
-    return false;
-  }
 }
 
 export default function ConnectionsPane({
@@ -242,7 +221,7 @@ export default function ConnectionsPane({
     const prompt = lastOnHost
       ? `删除连接 ${profile.name}？这是该主机下的最后一个连接，主机记录会一并移除，审计记录保留。`
       : `删除连接 ${profile.name}？该主机下的其他连接不受影响。`;
-    const ok = await ask(prompt, "删除连接");
+    const ok = await confirmDestructive(prompt, "删除连接");
     if (!ok) {
       return;
     }

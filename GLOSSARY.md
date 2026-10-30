@@ -40,6 +40,10 @@ _Avoid_: 聊天、Chat、Thread、会话（已被 Session 占用）
 注入到目标机交互 shell 会话内的钩子，在每次显示提示符时上报上一条用户命令、退出码与 cwd；只存在于当前会话，不写入目标机磁盘。
 _Avoid_: shell 集成脚本、rc 修改
 
+**Model Profile（模型档案）**：
+一组用于访问某个 OpenAI 兼容模型的连接设置：名称、Base URL、模型名与 API Key；API Key 以密文存于本地，可在界面上维护多个档案，每轮对话选用其中一个。
+_Avoid_: 模型配置、LLM 设置、Provider
+
 **Audit Log（审计日志）**：
 按时间追加的记录流，包含每条 Command Execution 的发起者（用户或 AI）、Session、命令、退出码与 cwd（用户命令）或输出与状态（AI 命令）；用户命令依赖 Shell Hook，钩子降级时只有 AI 命令入账。落盘为 `audit.jsonl`，按大小轮转并保留有限份数的历史文件。
 _Avoid_: 日志、Log、历史记录

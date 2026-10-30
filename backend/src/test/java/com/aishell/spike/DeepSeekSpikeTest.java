@@ -2,6 +2,7 @@ package com.aishell.spike;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aishell.spike.agent.SpikeAgentConfig;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
@@ -17,8 +18,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 
 @SpringBootTest(properties = "ai-shell.token=test-token")
+@Import(SpikeAgentConfig.class)
 @EnabledIfEnvironmentVariable(named = "DEEPSEEK_API_KEY", matches = "\\S+")
 class DeepSeekSpikeTest {
 

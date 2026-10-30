@@ -1,4 +1,4 @@
-package com.aishell.host;
+package com.aishell.security;
 
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;

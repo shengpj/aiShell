@@ -9,6 +9,7 @@
 - **连接管理**：一行为一条 Connection Profile（名称 + `用户@地址:端口`），同一主机可复用多条配置；私钥或密码加密保存，最新创建的排在最前，当前已连接的行右上角显示绿点。
 - **终端**：xterm.js + JSch PTY，支持窗口大小同步、密码与主机指纹在终端内交互确认、审计就绪/受限徽标。
 - **AI 助手**：基于 Google ADK 的流式对话，AI 命令与用户共享同一个 PTY，因此 `cd`、环境变量等状态连续；对话按主机持久化，跨重启保留，可“新对话”分段。
+- **模型设置**：模型连接信息（名称、Base URL、模型名、API Key）在应用内维护，可保存多个档案并在每次提问时选择；API Key 加密保存在本机，不写入配置文件。
 - **安全护栏**：危险命令 deny-list、每条命令超时、同一会话只允许一条命令在途、全局停止、完整审计（`audit.jsonl`，按大小轮转）。
 - **只读文件浏览**：底部面板左右分栏——左侧从 `/` 开始的目录树（单击展开子目录），右侧六列表格（名称、大小、类型、修改时间、权限、用户/用户组），支持面包屑与上一级、文本/图片预览。不提供上传、下载、删除或在线编辑。
 
@@ -31,7 +32,7 @@
 
 关键约定：
 
-- bearer token 只存在于 Rust 进程；webview 拿不到后端地址的访问凭据，只能换取 30 秒有效、单次使用、按用途（`terminal` / `hosts` / `files` / `chat`）绑定的 ticket。
+- bearer token 只存在于 Rust 进程；webview 拿不到后端地址的访问凭据，只能换取 30 秒有效、单次使用、按用途（`terminal` / `hosts` / `files` / `chat` / `models`）绑定的 ticket。
 - 密码与首次主机指纹确认由 JSch 的 `UserInfo` 渲染进终端，不使用系统弹窗，也不进日志。
 - 连接配置密码/私钥口令使用 AES-256-GCM 加密，主密钥由 Rust 生成并存入 Windows 凭据管理器（`AI Shell/master-key`），通过环境变量传给后端；主密钥不可用时写密钥直接返回 503。
 - 终端、AI 执行与文件浏览共用同一个 SSH Session（一次连接、一套凭据、一次指纹确认）。
@@ -43,7 +44,7 @@
 | 桌面壳 | Tauri 2（Rust，WebView2）、Windows Job Object 防孤儿进程 |
 | 前端 | React 19、TypeScript、Vite 7、xterm.js 6 |
 | 后端 | Java 21、Spring Boot 4.0.2（webmvc + websocket）、JSch 2.28.8 |
-| AI | Google ADK 1.13.0 + `google-adk-spring-ai`、Spring AI 2.0.1，OpenAI 兼容网关（默认 `deepseek-v4.1-flash`） |
+| AI | Google ADK 1.13.0 + `google-adk-spring-ai`、Spring AI 2.0.1，任意 OpenAI 兼容网关（在应用内配置） |
 | 存储 | SQLite（`sqlite-jdbc`）、`audit.jsonl` 审计文件 |
 | 打包 | Maven + jlink 运行时 + NSIS 安装包 / 便携 zip |
 
@@ -79,12 +80,7 @@
 
    只调样式时可以 `npm run dev`，但页面依赖 Tauri 的 `backend_info` / `backend_ticket` 命令，脱离 Tauri 窗口无法连接后端。
 
-4. 运行 AI 功能前设置模型密钥（只从环境变量读取，不会写入仓库或数据库）：
-
-   ```powershell
-   $env:DEEPSEEK_API_KEY = "sk-..."
-   npm run tauri dev
-   ```
+4. 运行 AI 功能前先配置模型：启动应用后在右侧 AI 面板点“模型设置”，填写名称、Base URL、模型名与 API Key（可保存多个，聊天时在下拉框里选择）。密钥加密保存在本机，不需要改配置文件或环境变量。
 
 ## 测试
 
@@ -108,6 +104,14 @@ cargo test
 | `AISHELL_LIVE_HOST` / `AISHELL_LIVE_USER` / `AISHELL_LIVE_KEY` | 目标主机、用户、私钥路径 |
 | `AISHELL_LIVE_PORT` | 可选，默认 22 |
 | `AISHELL_LIVE_SHELL` | 可选，断言登录 shell（`bash` / `zsh`） |
+
+`DeepSeekSpikeTest`（ADK + Spring AI 真实网关）只读取环境变量，不影响应用自身的模型设置：
+
+| 变量 | 说明 |
+| --- | --- |
+| `DEEPSEEK_API_KEY` | 未设置时该测试自动跳过 |
+| `DEEPSEEK_BASE_URL` | OpenAI 兼容网关，默认 `https://sub.vcnovb.cn` |
+| `DEEPSEEK_MODEL` | 模型名，默认 `deepseek-v4.1-flash` |
 
 ## 打包
 
@@ -137,15 +141,12 @@ powershell -ExecutionPolicy Bypass -File scripts/package.ps1 -SkipTests -Bundle 
 
 | 变量 | 说明 |
 | --- | --- |
-| `DEEPSEEK_API_KEY` | 模型密钥（必填，AI 功能依赖） |
-| `DEEPSEEK_BASE_URL` | OpenAI 兼容网关，默认 `https://sub.vcnovb.cn` |
-| `DEEPSEEK_MODEL` | 模型名，默认 `deepseek-v4.1-flash` |
 | `AI_SHELL_BACKEND_JAR` | 覆盖后端 jar 路径（开发调试用） |
 | `AI_SHELL_JAVA` | 覆盖 java 可执行文件路径 |
 
 数据目录内容：
 
-- `ai-shell.db` — 主机、连接配置（密文）、对话与消息、ADK 会话
+- `ai-shell.db` — 主机、连接配置（密文）、模型档案（API Key 密文）、对话与消息、ADK 会话
 - `known_hosts` — SSH 主机指纹
 - `audit.jsonl` / `audit.jsonl.1` … — 审计日志（默认 10 MiB 轮转、保留 5 份）
 - 后端日志：`%LOCALAPPDATA%\com.aishell.desktop\logs\backend.log`
@@ -158,7 +159,7 @@ src/api/             调用后端 REST 的客户端（ticket 由 Rust 命令换�
 src-tauri/           Tauri 壳：sidecar 监督、ticket、凭据管理器、打包配置
 backend/             Spring Boot sidecar（SSH/PTY/SFTP、ADK、SQLite、审计）
 scripts/package.ps1  一条命令完成 jar → jlink → tauri build → 便携目录/zip
-docs/adr/            架构决策记录（ADR 0001–0013）
+docs/adr/            架构决策记录（ADR 0001–0015）
 GLOSSARY.md          领域术语表（Host / Profile / Session / Conversation …）
 ```
 
@@ -181,6 +182,8 @@ GLOSSARY.md          领域术语表（Host / Profile / Session / Conversation �
 | 0011 | 对话持久化 |
 | 0012 | 打包与分发 |
 | 0013 | 原生窗口输入链路验证 |
+| 0014 | 聊天轮次时间线与会话内删除 |
+| 0015 | 用户自配置的模型档案与按轮选择 |
 
 ## 已知限制
 

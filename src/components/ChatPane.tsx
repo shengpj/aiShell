@@ -1,5 +1,5 @@
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { getBackendInfo, getBackendTicket, isTauri } from "../api/backend";
 import {
   deleteChatTurn,
@@ -8,6 +8,8 @@ import {
   type ChatHistoryEntry,
   type ChatHistoryResult,
 } from "../api/chat";
+import { listModels, type ModelView } from "../api/models";
+import ModelSettings from "./ModelSettings";
 
 async function confirmNewConversation(): Promise<boolean> {
   if (!isTauri()) {
@@ -28,6 +30,8 @@ async function confirmNewConversation(): Promise<boolean> {
 
 interface ChatPaneProps {
   sessionId: string | null;
+  /** Models can only be listed once the sidecar answers. */
+  backendReady: boolean;
 }
 
 type CommandState = "started" | "finished" | "refused";
@@ -69,7 +73,7 @@ interface TurnGroup {
   items: Entry[];
 }
 
-export default function ChatPane({ sessionId }: ChatPaneProps) {
+export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -78,11 +82,32 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
   const [selectedTurn, setSelectedTurn] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [copiedTurn, setCopiedTurn] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelView[]>([]);
+  const [modelId, setModelId] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const nextId = useRef(1);
   const currentTurn = useRef<string | null>(null);
   const copyTimer = useRef<number | null>(null);
+
+  const loadModels = useCallback(async () => {
+    try {
+      const list = await listModels();
+      setModels(list);
+      setModelId((current) =>
+        list.some((model) => model.id === current) ? current : (list[0]?.id ?? ""),
+      );
+    } catch (cause) {
+      setNotice(`模型列表加载失败：${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (backendReady) {
+      void loadModels();
+    }
+  }, [backendReady, loadModels]);
 
   useEffect(() => {
     abortRef.current?.abort();
@@ -294,7 +319,12 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
           "Content-Type": "application/json",
           "X-AI-Shell-Ticket": ticket,
         },
-        body: JSON.stringify({ session: sessionId, message, turn }),
+        body: JSON.stringify({
+          session: sessionId,
+          message,
+          turn,
+          ...(modelId ? { modelId } : {}),
+        }),
       });
       if (!response.ok || !response.body) {
         throw new Error(await errorMessage(response));
@@ -411,6 +441,13 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
   };
 
   const turns = groupTurns(entries);
+  const hasModels = models.length > 0;
+  const selectedModel = models.find((model) => model.id === modelId);
+  const modelHint = hasModels
+    ? null
+    : backendReady
+      ? "请先在模型设置中添加模型"
+      : "正在加载模型…";
 
   return (
     <aside className="pane chat">
@@ -420,6 +457,14 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
           <span className={sessionId ? "chat-session chat-session-on" : "chat-session"}>
             {sessionId ? "终端已连接" : "终端未连接"}
           </span>
+          <button
+            className="mini"
+            type="button"
+            title="管理模型：名称、Base URL、模型和 API Key"
+            onClick={() => setSettingsOpen(true)}
+          >
+            模型设置
+          </button>
           <button
             className="mini"
             type="button"
@@ -466,19 +511,52 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
       </div>
       {notice && <div className="terminal-message">{notice}</div>}
       <div className="chat-input">
-        <textarea
-          rows={2}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={
-            sessionId
-              ? "描述你要做的操作…（Enter 发送，Shift+Enter 换行）"
-              : "请先在终端连接主机"
-          }
-          aria-label="发送给 AI 的消息"
-          disabled={!sessionId || busy || historyLoading}
-        />
+        <div className="chat-compose">
+          <textarea
+            rows={2}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={
+              !sessionId
+                ? "请先在终端连接主机"
+                : (modelHint ?? "描述你要做的操作…（Enter 发送，Shift+Enter 换行）")
+            }
+            aria-label="发送给 AI 的消息"
+            disabled={!sessionId || busy || historyLoading || !hasModels}
+          />
+          <div className="compose-tools">
+            <label className="model-picker" title="这条消息使用的模型">
+              <span>模型</span>
+              <select
+                value={modelId}
+                onChange={(event) => setModelId(event.target.value)}
+                disabled={busy || !hasModels}
+                aria-label="选择模型"
+              >
+                {hasModels ? (
+                  models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">{backendReady ? "未配置模型" : "加载中…"}</option>
+                )}
+              </select>
+            </label>
+            {selectedModel && <span className="compose-hint">{selectedModel.model}</span>}
+            {!hasModels && backendReady && (
+              <button
+                className="link-button"
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+              >
+                添加模型
+              </button>
+            )}
+          </div>
+        </div>
         {busy ? (
           <button className="ghost-button stop-button" type="button" onClick={() => void stop()}>
             停止
@@ -488,12 +566,18 @@ export default function ChatPane({ sessionId }: ChatPaneProps) {
             className="send-button"
             type="button"
             onClick={() => void send()}
-            disabled={!sessionId || historyLoading || !draft.trim()}
+            disabled={!sessionId || historyLoading || !hasModels || !draft.trim()}
           >
             发送
           </button>
         )}
       </div>
+      {settingsOpen && (
+        <ModelSettings
+          onClose={() => setSettingsOpen(false)}
+          onChanged={() => void loadModels()}
+        />
+      )}
     </aside>
   );
 }

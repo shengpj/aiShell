@@ -1,6 +1,6 @@
 package com.aishell.web;
 
-import org.springframework.beans.factory.annotation.Value;
+import com.aishell.model.ModelService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -9,15 +9,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api")
 public class HealthController {
 
-  private final String model;
+  private final ModelService models;
 
-  public HealthController(@Value("${adk.spring-ai.model:unknown}") String model) {
-    this.model = model;
+  public HealthController(ModelService models) {
+    this.models = models;
   }
 
   @GetMapping("/health")
   public HealthResponse health() {
-    return new HealthResponse("UP", model);
+    return new HealthResponse("UP", models.defaultName().orElse(""));
   }
 
   public record HealthResponse(String status, String model) {}

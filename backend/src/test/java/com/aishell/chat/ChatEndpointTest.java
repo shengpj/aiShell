@@ -2,9 +2,11 @@ package com.aishell.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aishell.model.ChatModels;
 import com.aishell.terminal.FakeTerminal;
 import com.aishell.terminal.TerminalSessions;
 import com.aishell.web.TicketService;
+import com.google.adk.models.springai.SpringAI;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -35,6 +37,8 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 
 @SpringBootTest(
@@ -52,6 +56,8 @@ class ChatEndpointTest {
   private static final Path AUDIT = Path.of("target/test-data-chat/audit.jsonl");
 
   private final HttpClient client = HttpClient.newHttpClient();
+
+  private static final String FAKE_MODEL_ID = "fake-model";
 
   @LocalServerPort private int port;
 
@@ -108,6 +114,33 @@ class ChatEndpointTest {
             HttpResponse.BodyHandlers.ofString());
 
     assertThat(response.statusCode()).isEqualTo(409);
+  }
+
+  @Test
+  void chatUsesTheSelectedModel() throws Exception {
+    HttpResponse<InputStream> response =
+        client.send(
+            chatRequest(terminal.sessionId(), "please run the echo", FAKE_MODEL_ID)
+                .header("X-AI-Shell-Ticket", tickets.issue("chat").ticket())
+                .build(),
+            HttpResponse.BodyHandlers.ofInputStream());
+
+    assertThat(response.statusCode()).isEqualTo(200);
+    assertThat(new String(response.body().readAllBytes(), StandardCharsets.UTF_8))
+        .contains("event:text")
+        .contains("CHAT-OK");
+  }
+
+  @Test
+  void unknownModelIdIsRejected() throws Exception {
+    HttpResponse<String> response =
+        client.send(
+            chatRequest(terminal.sessionId(), "hi", "missing-model")
+                .header("X-AI-Shell-Ticket", tickets.issue("chat").ticket())
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(404);
   }
 
   @Test
@@ -279,7 +312,18 @@ class ChatEndpointTest {
   }
 
   private HttpRequest.Builder baseChatRequest(String session, String message) {
-    String body = "{\"session\":\"" + session + "\",\"message\":\"" + message + "\"}";
+    return chatRequest(session, message, null);
+  }
+
+  private HttpRequest.Builder chatRequest(String session, String message, String modelId) {
+    String body =
+        "{\"session\":\""
+            + session
+            + "\",\"message\":\""
+            + message
+            + "\""
+            + (modelId == null ? "" : ",\"modelId\":\"" + modelId + "\"")
+            + "}";
     return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/chat"))
         .header("Content-Type", "application/json")
         .timeout(Duration.ofSeconds(30))
@@ -297,6 +341,17 @@ class ChatEndpointTest {
     @Primary
     FakeModel fakeModel() {
       return new FakeModel();
+    }
+
+    @Bean
+    @Primary
+    ChatModels chatModels(FakeModel fakeModel) {
+      return modelId -> {
+        if (modelId != null && !modelId.isBlank() && !modelId.equals(FAKE_MODEL_ID)) {
+          throw new ResponseStatusException(HttpStatus.NOT_FOUND, "model not found");
+        }
+        return new SpringAI(fakeModel, FAKE_MODEL_ID);
+      };
     }
   }
 

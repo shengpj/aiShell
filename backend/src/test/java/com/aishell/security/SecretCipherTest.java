@@ -1,4 +1,4 @@
-package com.aishell.host;
+package com.aishell.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

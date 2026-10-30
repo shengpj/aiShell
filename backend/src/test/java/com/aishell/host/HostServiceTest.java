@@ -8,6 +8,7 @@ import com.aishell.host.HostService.HostRequest;
 import com.aishell.host.HostService.HostView;
 import com.aishell.host.HostService.ProfileRequest;
 import com.aishell.host.HostService.ProfileView;
+import com.aishell.security.SecretCipher;
 import java.nio.file.Path;
 import java.util.Base64;
 import org.junit.jupiter.api.BeforeEach;

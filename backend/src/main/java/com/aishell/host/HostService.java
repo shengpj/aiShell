@@ -1,5 +1,6 @@
 package com.aishell.host;
 
+import com.aishell.security.SecretCipher;
 import java.util.List;
 import java.util.Locale;
 import org.springframework.http.HttpStatus;

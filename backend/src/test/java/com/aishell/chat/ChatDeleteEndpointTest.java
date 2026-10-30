@@ -2,9 +2,11 @@ package com.aishell.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aishell.model.ChatModels;
 import com.aishell.terminal.FakeTerminal;
 import com.aishell.terminal.TerminalSessions;
 import com.aishell.web.TicketService;
+import com.google.adk.models.springai.SpringAI;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -201,6 +203,12 @@ class ChatDeleteEndpointTest {
     @Primary
     EchoModel echoModel() {
       return new EchoModel();
+    }
+
+    @Bean
+    @Primary
+    ChatModels chatModels(EchoModel echoModel) {
+      return modelId -> new SpringAI(echoModel, "echo-model");
     }
   }
 

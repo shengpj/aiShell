@@ -2,9 +2,11 @@ package com.aishell.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aishell.model.ChatModels;
 import com.aishell.terminal.FakeTerminal;
 import com.aishell.terminal.TerminalSessions;
 import com.aishell.web.TicketService;
+import com.google.adk.models.springai.SpringAI;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -169,6 +171,12 @@ class ChatResetEndpointTest {
     @Primary
     ChatEndpointTest.FakeModel fakeModel() {
       return new ChatEndpointTest.FakeModel();
+    }
+
+    @Bean
+    @Primary
+    ChatModels chatModels(ChatEndpointTest.FakeModel fakeModel) {
+      return modelId -> new SpringAI(fakeModel, "fake-model");
     }
   }
 }

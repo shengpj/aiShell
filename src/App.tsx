@@ -74,7 +74,7 @@ export default function App() {
           <TerminalPane connection={connection} onSessionChange={setSessionId} />
           <FileTreePane sessionId={sessionId} />
         </section>
-        <ChatPane sessionId={sessionId} />
+        <ChatPane sessionId={sessionId} backendReady={info?.status === "ready"} />
       </main>
 
       <StatusBar preview={preview} info={info} health={health} />

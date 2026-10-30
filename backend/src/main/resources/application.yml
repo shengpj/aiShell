@@ -8,18 +8,16 @@ spring:
   main:
     banner-mode: off
   ai:
-    openai:
-      api-key: ${DEEPSEEK_API_KEY:missing-key}
-      base-url: ${DEEPSEEK_BASE_URL:https://sub.vcnovb.cn}
-      chat:
-        options:
-          model: ${DEEPSEEK_MODEL:deepseek-v4.1-flash}
-          temperature: 0.2
-
-adk:
-  spring-ai:
-    model: ${DEEPSEEK_MODEL:deepseek-v4.1-flash}
-    temperature: 0.2
+    # Model endpoints are configured by the user in the app, so none of the provider
+    # autoconfigurations may run and demand an API key at startup.
+    model:
+      chat: none
+      embedding: none
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
 
 ai-shell:
   token: ${AI_SHELL_TOKEN:}
