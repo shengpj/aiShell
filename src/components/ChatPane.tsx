@@ -9,6 +9,7 @@ import {
   type ChatHistoryResult,
 } from "../api/chat";
 import { listModels, type ModelView } from "../api/models";
+import ModelPicker from "./ModelPicker";
 import ModelSettings from "./ModelSettings";
 
 async function confirmNewConversation(): Promise<boolean> {
@@ -442,11 +443,10 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
 
   const turns = groupTurns(entries);
   const hasModels = models.length > 0;
-  const selectedModel = models.find((model) => model.id === modelId);
   const modelHint = hasModels
     ? null
     : backendReady
-      ? "请先在模型设置中添加模型"
+      ? "请先在下方模型菜单中选择「模型管理」添加模型"
       : "正在加载模型…";
 
   return (
@@ -457,14 +457,6 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
           <span className={sessionId ? "chat-session chat-session-on" : "chat-session"}>
             {sessionId ? "终端已连接" : "终端未连接"}
           </span>
-          <button
-            className="mini"
-            type="button"
-            title="管理模型：名称、Base URL、模型和 API Key"
-            onClick={() => setSettingsOpen(true)}
-          >
-            模型设置
-          </button>
           <button
             className="mini"
             type="button"
@@ -526,35 +518,14 @@ export default function ChatPane({ sessionId, backendReady }: ChatPaneProps) {
             disabled={!sessionId || busy || historyLoading || !hasModels}
           />
           <div className="compose-tools">
-            <label className="model-picker" title="这条消息使用的模型">
-              <span>模型</span>
-              <select
-                value={modelId}
-                onChange={(event) => setModelId(event.target.value)}
-                disabled={busy || !hasModels}
-                aria-label="选择模型"
-              >
-                {hasModels ? (
-                  models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">{backendReady ? "未配置模型" : "加载中…"}</option>
-                )}
-              </select>
-            </label>
-            {selectedModel && <span className="compose-hint">{selectedModel.model}</span>}
-            {!hasModels && backendReady && (
-              <button
-                className="link-button"
-                type="button"
-                onClick={() => setSettingsOpen(true)}
-              >
-                添加模型
-              </button>
-            )}
+            <ModelPicker
+              models={models}
+              value={modelId}
+              onChange={setModelId}
+              onManage={() => setSettingsOpen(true)}
+              disabled={busy || !backendReady}
+              loading={!backendReady}
+            />
           </div>
         </div>
         {busy ? (
