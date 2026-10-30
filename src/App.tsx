@@ -292,7 +292,13 @@ export default function App() {
                     setAiPrefill({ tabId: tab.id, prompt });
                   }}
                 />
-                <FileTreePane sessionId={tab.sessionId} />
+                <FileTreePane
+                  sessionId={tab.sessionId}
+                  onAskAi={(prompt) => {
+                    setActiveTabId(tab.id);
+                    setAiPrefill({ tabId: tab.id, prompt });
+                  }}
+                />
               </div>
             ))
           )}

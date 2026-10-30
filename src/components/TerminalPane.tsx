@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { getBackendInfo, getBackendTicket, websocketUrl } from "../api/backend";
 import { loadCommandHistory, type CommandHistoryEntry } from "../api/commands";
 import type { ProfileConnection } from "../api/hosts";
+import { contextSuffix, limitAiContext } from "../utils/aiContext";
 
 type Phase = "idle" | "connecting" | "open" | "closed";
 type AiState = "running" | "takeover";
@@ -64,6 +65,7 @@ export default function TerminalPane({ onSessionChange, onAskAi, connection }: T
   const [historyTruncated, setHistoryTruncated] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [terminalSelection, setTerminalSelection] = useState("");
   const [ai, setAi] = useState<{ state: AiState; command?: string; reason?: string } | null>(null);
   const [hook, setHook] = useState<{ state: HookState; shell?: string; message?: string } | null>(
     null,
@@ -177,6 +179,10 @@ export default function TerminalPane({ onSessionChange, onAskAi, connection }: T
     fit.fit();
     termRef.current = terminal;
 
+    const selection = terminal.onSelectionChange(() => {
+      setTerminalSelection(terminal.getSelection());
+    });
+
     const sendResize = () => {
       fit.fit();
       const socket = socketRef.current;
@@ -196,11 +202,13 @@ export default function TerminalPane({ onSessionChange, onAskAi, connection }: T
 
     return () => {
       input.dispose();
+      selection.dispose();
       observer.disconnect();
       clearReconnect();
       closeSocket(true);
       connectionRef.current = null;
       setSessionId(null);
+      setTerminalSelection("");
       sessionListener.current?.(null);
       terminal.dispose();
       container.replaceChildren();
@@ -228,6 +236,7 @@ export default function TerminalPane({ onSessionChange, onAskAi, connection }: T
     setMessage(null);
     setAi(null);
     setHook(null);
+    setTerminalSelection("");
     terminal.reset();
     updatePhase("connecting");
     try {
@@ -348,6 +357,7 @@ export default function TerminalPane({ onSessionChange, onAskAi, connection }: T
     connectionRef.current = null;
     setAi(null);
     setHook(null);
+    setTerminalSelection("");
     setSessionId(null);
     sessionListener.current?.(null);
     updatePhase("closed");
@@ -401,6 +411,18 @@ export default function TerminalPane({ onSessionChange, onAskAi, connection }: T
       `请分析这条历史命令的用途、风险和执行结果，并说明在当前主机上是否适合再次执行：\n命令：${entry.command}\n退出码：${result}${output}`,
     );
     setHistoryOpen(false);
+  };
+
+  const askAiAboutSelection = () => {
+    const selected = limitAiContext(terminalSelection);
+    if (!selected.text) {
+      return;
+    }
+    onAskAi?.(
+      `请分析下面这段终端输出，指出异常、可能原因和建议的下一步排查命令。不要假设未提供的环境信息。\n\n终端输出：\n\`\`\`\n${selected.text}\n\`\`\`${contextSuffix(selected.truncated)}`,
+    );
+    termRef.current?.clearSelection();
+    setTerminalSelection("");
   };
 
   return (
@@ -461,6 +483,16 @@ export default function TerminalPane({ onSessionChange, onAskAi, connection }: T
               onClick={() => setHistoryOpen((current) => !current)}
             >
               历史
+            </button>
+          )}
+          {terminalSelection.trim() && (
+            <button
+              className="ghost-button"
+              type="button"
+              title="把选中的终端输出带入 AI 对话"
+              onClick={askAiAboutSelection}
+            >
+              问 AI
             </button>
           )}
         </div>

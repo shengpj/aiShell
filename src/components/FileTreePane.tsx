@@ -7,6 +7,7 @@ import {
   type FilePreview,
   type FileType,
 } from "../api/files";
+import { contextSuffix, limitAiContext } from "../utils/aiContext";
 import FileIcon, { iconKind } from "./FileIcon";
 
 function message(cause: unknown): string {
@@ -96,7 +97,12 @@ function TreeRow({ path, depth, expanded, current, onOpen, onToggle }: TreeRowPr
   );
 }
 
-export default function FileTreePane({ sessionId }: { sessionId: string | null }) {
+interface FileTreePaneProps {
+  sessionId: string | null;
+  onAskAi?: (prompt: string) => void;
+}
+
+export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) {
   const [cwd, setCwd] = useState("/");
   const [listing, setListing] = useState<FileListing | null>(null);
   const [treeDirs, setTreeDirs] = useState<Record<string, FileEntry[]>>({});
@@ -285,6 +291,17 @@ export default function FileTreePane({ sessionId }: { sessionId: string | null }
     setPreviewError(null);
   };
 
+  const askAiAboutPreview = () => {
+    if (!preview || preview.kind !== "text" || !preview.text) {
+      return;
+    }
+    const content = limitAiContext(preview.text);
+    onAskAi?.(
+      `请分析远程文件 ${preview.path} 的内容，重点说明配置错误、异常日志、风险和建议的修改或排查步骤。不要假设未提供的环境信息。\n\n文件内容：\n\`\`\`\n${content.text}\n\`\`\`${contextSuffix(content.truncated || preview.truncated)}`,
+    );
+    closePreview();
+  };
+
   const treeRows: ReactNode[] = [];
   const walkTree = (path: string, depth: number) => {
     for (const dir of treeDirs[path] ?? []) {
@@ -462,6 +479,16 @@ export default function FileTreePane({ sessionId }: { sessionId: string | null }
               {previewPath}
             </span>
             {preview && <span className="file-preview-meta">{formatSize(preview.size)}</span>}
+            {preview?.kind === "text" && (
+              <button
+                className="ghost-button"
+                type="button"
+                title="把文件内容带入 AI 对话"
+                onClick={askAiAboutPreview}
+              >
+                问 AI
+              </button>
+            )}
             <button className="ghost-button" type="button" onClick={closePreview}>
               关闭
             </button>

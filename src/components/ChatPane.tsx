@@ -10,6 +10,7 @@ import {
   type ChatHistoryResult,
 } from "../api/chat";
 import { listModels, type ModelView } from "../api/models";
+import { contextSuffix, limitAiContext } from "../utils/aiContext";
 import ModelPicker from "./ModelPicker";
 import ModelSettings from "./ModelSettings";
 
@@ -467,6 +468,17 @@ export default function ChatPane({
     void send(`请重试刚才失败的命令：${command}`);
   };
 
+  const askAiAboutCommandOutput = (entry: Extract<Entry, { kind: "command" }>) => {
+    if (!entry.output?.trim()) {
+      return;
+    }
+    const output = limitAiContext(entry.output);
+    setDraft(
+      `请分析命令「${entry.command}」的执行输出，判断是否存在异常，解释关键日志并给出下一步排查建议。不要假设未提供的环境信息。\n退出码：${entry.exitCode ?? "未知"}\n\n命令输出：\n\`\`\`\n${output.text}\n\`\`\`${contextSuffix(output.truncated)}`,
+    );
+    setNotice("已把命令输出带入输入框，确认后发送给 AI");
+  };
+
   useEffect(
     () => () => {
       if (copyTimer.current !== null) {
@@ -611,6 +623,7 @@ export default function ChatPane({
             pendingAction={pendingAction}
             onDecideCommand={decideCommand}
             onRetryCommand={retryCommand}
+            onAskAiOutput={askAiAboutCommandOutput}
           />
         ))}
         {busy && (
@@ -743,6 +756,7 @@ interface ChatTurnProps {
   pendingAction: string | null;
   onDecideCommand: (token: string, approved: boolean) => void;
   onRetryCommand: (command: string) => void;
+  onAskAiOutput: (entry: Extract<Entry, { kind: "command" }>) => void;
 }
 
 function ChatTurn({
@@ -758,6 +772,7 @@ function ChatTurn({
   pendingAction,
   onDecideCommand,
   onRetryCommand,
+  onAskAiOutput,
 }: ChatTurnProps) {
   const user = group.user;
   const selectable = group.turn !== "" && !busy;
@@ -812,7 +827,7 @@ function ChatTurn({
       {group.items.length > 0 && (
         <div className="turn-items">
           {group.items.map((entry) =>
-            renderEntry(entry, pendingAction, onDecideCommand, onRetryCommand),
+            renderEntry(entry, pendingAction, onDecideCommand, onRetryCommand, onAskAiOutput),
           )}
         </div>
       )}
@@ -825,6 +840,7 @@ function renderEntry(
   pendingAction: string | null,
   onDecideCommand: (token: string, approved: boolean) => void,
   onRetryCommand: (command: string) => void,
+  onAskAiOutput: (entry: Extract<Entry, { kind: "command" }>) => void,
 ) {
   switch (entry.kind) {
     case "ai":
@@ -847,6 +863,7 @@ function renderEntry(
           pendingAction={pendingAction}
           onDecide={onDecideCommand}
           onRetry={onRetryCommand}
+          onAskAi={() => onAskAiOutput(entry)}
         />
       );
     default:
@@ -859,11 +876,13 @@ function CommandCard({
   pendingAction,
   onDecide,
   onRetry,
+  onAskAi,
 }: {
   entry: Extract<Entry, { kind: "command" }>;
   pendingAction: string | null;
   onDecide: (token: string, approved: boolean) => void;
   onRetry: (command: string) => void;
+  onAskAi: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const meta = commandMeta(entry);
@@ -914,6 +933,15 @@ function CommandCard({
               onClick={() => void copyCommandText(entry.output ?? "")}
             >
               <CopyIcon />
+            </button>
+            <button
+              className="icon-action"
+              type="button"
+              title="把命令输出带入 AI 对话"
+              aria-label="把命令输出带入 AI 对话"
+              onClick={onAskAi}
+            >
+              AI
             </button>
           </div>
           {expanded && <pre className="command-output">{entry.output}</pre>}
