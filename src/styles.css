@@ -1361,6 +1361,24 @@ body {
   background: rgba(92, 184, 112, 0.08);
 }
 
+.runbook-add {
+  border-style: dashed;
+  color: var(--accent);
+  text-align: center;
+}
+
+.runbook-editor {
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: #0e0e0e;
+  color: var(--text);
+  font: 12px/1.45 Consolas, "Cascadia Mono", "Courier New", monospace;
+}
+
 .runbook-card-title {
   font-size: 12px;
   font-weight: 600;
