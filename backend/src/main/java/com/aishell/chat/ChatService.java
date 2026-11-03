@@ -8,6 +8,7 @@ import com.aishell.chat.command.RunCommandTool;
 import com.aishell.model.ChatModels;
 import com.aishell.terminal.TerminalBridge;
 import com.aishell.terminal.TerminalSessions;
+import com.aishell.runbook.RunbookExecutionStore;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
@@ -76,6 +77,7 @@ public class ChatService {
   private final SqliteAgentSessionService sessions;
   private final ChatTranscriptStore transcript;
   private final CommandApproval approvals;
+  private final RunbookExecutionStore runbookExecutions;
   private final Set<String> active = ConcurrentHashMap.newKeySet();
 
   public ChatService(
@@ -87,7 +89,8 @@ public class ChatService {
       AiProperties properties,
       SqliteAgentSessionService sessions,
       ChatTranscriptStore transcript,
-      CommandApproval approvals) {
+      CommandApproval approvals,
+      RunbookExecutionStore runbookExecutions) {
     this.models = models;
     this.terminals = terminals;
     this.guard = guard;
@@ -97,6 +100,7 @@ public class ChatService {
     this.sessions = sessions;
     this.transcript = transcript;
     this.approvals = approvals;
+    this.runbookExecutions = runbookExecutions;
   }
 
   /** True while a turn is streaming for this terminal session. */
@@ -110,7 +114,9 @@ public class ChatService {
       String message,
       String turn,
       String modelId,
-      String requestedPolicy) {
+      String requestedPolicy,
+      String runbookId,
+      int runbookVersion) {
     SpringAI turnModel = models.forTurn(modelId);
     AiExecutionPolicy policy =
         AiExecutionPolicy.parse(requestedPolicy, properties.getExecutionPolicy());
@@ -119,7 +125,13 @@ public class ChatService {
           HttpStatus.CONFLICT, "a chat turn is already running for this session");
     }
 
+    String turnId =
+        turn == null || turn.isBlank() ? java.util.UUID.randomUUID().toString() : turn.trim();
     SseEmitter emitter = new SseEmitter(properties.getTurnTimeoutSeconds() * 1000L);
+    String executionId = runbookId == null || runbookId.isBlank() || runbookVersion < 1
+        ? null
+        : runbookExecutions.start(runbookId.trim(), runbookVersion, sessionId, turnId(turn));
+    java.util.concurrent.atomic.AtomicBoolean executionDone = new java.util.concurrent.atomic.AtomicBoolean();
     CompletableFuture<Void> finished = new CompletableFuture<>();
     AtomicReference<Disposable> subscription = new AtomicReference<>();
     java.util.concurrent.atomic.AtomicBoolean turnDone =
@@ -128,12 +140,11 @@ public class ChatService {
     Runnable onExternalStop =
         () -> {
           if (turnDone.compareAndSet(false, true)) {
+            finishRunbook(executionId, executionDone, "cancelled", "stopped by user");
             cancelTurn(sessionId, finished, subscription);
           }
         };
 
-    String turnId =
-        turn == null || turn.isBlank() ? java.util.UUID.randomUUID().toString() : turn.trim();
     recordUser(conversationId, turnId, message);
     ChatChannel channel =
         new ChatChannel(
@@ -151,6 +162,7 @@ public class ChatService {
     emitter.onError(
         error -> {
           log.debug("chat SSE error for {}: {}", sessionId, error.getMessage());
+          finishRunbook(executionId, executionDone, "failed", messageOf(error));
           onExternalStop.run();
         });
     emitter.onCompletion(onExternalStop);
@@ -168,7 +180,9 @@ public class ChatService {
                     subscription,
                     turnDone,
                     turnModel,
-                    policy));
+                    policy,
+                    executionId,
+                    executionDone));
     return emitter;
   }
 
@@ -269,7 +283,9 @@ public class ChatService {
       AtomicReference<Disposable> subscription,
       java.util.concurrent.atomic.AtomicBoolean turnDone,
       SpringAI model,
-      AiExecutionPolicy policy) {
+      AiExecutionPolicy policy,
+      String executionId,
+      java.util.concurrent.atomic.AtomicBoolean executionDone) {
     try {
       if (finished.isDone()) {
         return;
@@ -315,14 +331,19 @@ public class ChatService {
               },
               () -> {
                 channel.send("done", Map.of());
+              finishRunbook(executionId, executionDone, "completed", null);
                 finished.complete(null);
               });
       subscription.set(disposable);
 
       finished.get(properties.getTurnTimeoutSeconds(), TimeUnit.SECONDS);
     } catch (java.util.concurrent.TimeoutException e) {
+      finishRunbook(executionId, executionDone, "timeout", "chat turn timed out");
       channel.send("error", Map.of("message", "chat turn timed out"));
+      finishRunbook(executionId, executionDone, "timeout", "chat turn timed out");
     } catch (Exception e) {
+      finishRunbook(executionId, executionDone, "failed", messageOf(e));
+      finishRunbook(executionId, executionDone, "failed", messageOf(e));
       log.info("chat turn aborted for {}: {}", sessionId, e.toString());
       channel.send("error", Map.of("message", messageOf(e)));
     } finally {
@@ -334,7 +355,19 @@ public class ChatService {
       active.remove(sessionId);
       channel.complete();
       finished.complete(null);
+      finishRunbook(executionId, executionDone, "cancelled", "chat turn stopped");
     }
+  }
+
+  private void finishRunbook(String executionId, java.util.concurrent.atomic.AtomicBoolean done,
+      String status, String message) {
+    if (executionId != null && done.compareAndSet(false, true)) {
+      runbookExecutions.finish(executionId, status, message);
+    }
+  }
+
+  private static String turnId(String turn) {
+    return turn == null || turn.isBlank() ? "pending" : turn.trim();
   }
 
   private void forward(Event event, ChatChannel channel) {

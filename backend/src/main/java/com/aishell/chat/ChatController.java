@@ -47,7 +47,7 @@ public class ChatController {
     String conversation = conversationOf(request.session());
     return chats.start(
         conversation, request.session(), request.message().trim(), request.turn(),
-        request.modelId(), request.executionPolicy());
+        request.modelId(), request.executionPolicy(), request.runbookId(), request.runbookVersion());
   }
 
   @PostMapping("/api/chat/command-decision")
@@ -127,7 +127,8 @@ public class ChatController {
   }
 
   public record ChatRequest(
-      String session, String message, String turn, String modelId, String executionPolicy) {}
+      String session, String message, String turn, String modelId, String executionPolicy,
+      String runbookId, int runbookVersion) {}
 
   public record CommandDecisionRequest(String token, boolean approved) {}
 

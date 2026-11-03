@@ -15,6 +15,10 @@ export interface RunbookRevision {
   runbookId: string; version: number; title: string; summary: string; category: string;
   fields: CustomRunbookField[]; steps: string[]; success: string[]; branches: CustomRunbookBranch[]; createdAt: string;
 }
+export interface RunbookExecution {
+  id: string; runbookId: string; runbookVersion: number; session: string; turn: string;
+  status: string; startedAt: string; finishedAt?: string; message?: string;
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const info = await getBackendInfo();
@@ -48,4 +52,7 @@ export function rollbackRunbook(id: string, targetVersion: number, expectedVersi
     method: "POST",
     body: JSON.stringify({ targetVersion, expectedVersion }),
   });
+}
+export function listRunbookExecutions(id: string): Promise<RunbookExecution[]> {
+  return request(`/api/runbooks/${encodeURIComponent(id)}/executions`);
 }

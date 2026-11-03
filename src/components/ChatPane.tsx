@@ -111,6 +111,7 @@ export default function ChatPane({
   const [modelId, setModelId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [runbookOpen, setRunbookOpen] = useState(false);
+  const [runbookContext, setRunbookContext] = useState<{ id: string; version: number } | null>(null);
   const [executionPolicy, setExecutionPolicy] = useState<ExecutionPolicy>(() => {
     try {
       const value = window.localStorage.getItem(EXECUTION_POLICY_KEY);
@@ -444,6 +445,7 @@ export default function ChatPane({
           turn,
           ...(modelId ? { modelId } : {}),
           executionPolicy,
+          ...(runbookContext ? { runbookId: runbookContext.id, runbookVersion: runbookContext.version } : {}),
         }),
       });
       if (!response.ok || !response.body) {
@@ -481,8 +483,9 @@ export default function ChatPane({
     setNotice("已把命令输出带入输入框，确认后发送给 AI");
   };
 
-  const useRunbook = (prompt: string) => {
+  const useRunbook = (prompt: string, runbook: { id: string; version: number }) => {
     setDraft(prompt);
+    setRunbookContext(runbook);
     setRunbookOpen(false);
     setNotice("Runbook 已填入输入框，确认后发送给 AI");
   };

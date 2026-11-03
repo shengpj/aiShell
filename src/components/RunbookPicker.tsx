@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { confirmDestructive } from "../api/confirm";
-import { createCustomRunbook, deleteCustomRunbook, listCustomRunbooks, listRunbookRevisions, rollbackRunbook, updateCustomRunbook, type CustomRunbook, type RunbookRevision } from "../api/runbooks";
+import { createCustomRunbook, deleteCustomRunbook, listCustomRunbooks, listRunbookExecutions, listRunbookRevisions, rollbackRunbook, updateCustomRunbook, type CustomRunbook, type RunbookExecution, type RunbookRevision } from "../api/runbooks";
 import { buildRunbookPrompt, RUNBOOKS, type Runbook } from "../runbooks";
 
 interface RunbookPickerProps {
   onClose: () => void;
-  onUse: (prompt: string) => void;
+  onUse: (prompt: string, runbook: { id: string; version: number }) => void;
 }
 
 export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
@@ -17,6 +17,8 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
   const [error, setError] = useState<string | null>(null);
   const [revisions, setRevisions] = useState<RunbookRevision[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [executions, setExecutions] = useState<RunbookExecution[]>([]);
+  const [executionOpen, setExecutionOpen] = useState(false);
   const all = useMemo<Runbook[]>(() => [...RUNBOOKS, ...custom.map((item) => item as Runbook)], [custom]);
   const selected = useMemo(
     () => all.find((runbook) => runbook.id === selectedId) ?? all[0],
@@ -42,6 +44,7 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
       return;
     }
     void listRunbookRevisions(selectedId).then(setRevisions).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+    void listRunbookExecutions(selectedId).then(setExecutions).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
   }, [custom, selectedId]);
 
   if (!selected) {
@@ -150,6 +153,15 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
                 </div>
                 <div className="form-actions"><button className="ghost-button" type="button" onClick={() => setHistoryOpen(false)}>返回</button></div>
               </>
+            ) : executionOpen && isCustom ? (
+              <>
+                <div><h3>执行记录</h3><p className="form-hint">记录由聊天回合产生，命令仍受执行策略、审批和审计约束。</p></div>
+                <div className="runbook-revisions">
+                  {executions.map((execution) => <div className="runbook-revision" key={execution.id}><div><strong>{execution.status}</strong><span className="form-hint">{new Date(execution.startedAt).toLocaleString()}</span></div><span className="runbook-revision-title">版本 {execution.runbookVersion} · {execution.message ?? execution.session}</span><span className="form-hint">{execution.finishedAt ? new Date(execution.finishedAt).toLocaleString() : "进行中"}</span></div>)}
+                  {executions.length === 0 && <p className="empty-hint">暂无执行记录</p>}
+                </div>
+                <div className="form-actions"><button className="ghost-button" type="button" onClick={() => setExecutionOpen(false)}>返回</button></div>
+              </>
             ) : (
             <>
             <div>
@@ -186,14 +198,14 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
                 className="connect-button"
                 type="button"
                 disabled={!canUse}
-                onClick={() => onUse(buildRunbookPrompt(selected, values))}
+                onClick={() => onUse(buildRunbookPrompt(selected, values), { id: selected.id, version: isCustom ? (selected as CustomRunbook).version : 1 })}
               >
                 填入对话
               </button>
               <button className="ghost-button" type="button" onClick={onClose}>
                 取消
               </button>
-              {isCustom && <><button className="ghost-button" type="button" onClick={() => { setDraft(selected as CustomRunbook); setEditing(true); }}>编辑</button><button className="ghost-button" type="button" onClick={() => setHistoryOpen(true)}>历史</button><button className="danger-button" type="button" onClick={() => void remove()}>删除</button></>}
+              {isCustom && <><button className="ghost-button" type="button" onClick={() => { setDraft(selected as CustomRunbook); setEditing(true); }}>编辑</button><button className="ghost-button" type="button" onClick={() => setHistoryOpen(true)}>历史</button><button className="ghost-button" type="button" onClick={() => setExecutionOpen(true)}>执行记录</button><button className="danger-button" type="button" onClick={() => void remove()}>删除</button></>}
             </div>
             </>
             )}

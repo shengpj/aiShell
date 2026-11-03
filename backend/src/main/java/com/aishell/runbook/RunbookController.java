@@ -16,8 +16,12 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/runbooks")
 public class RunbookController {
   private final RunbookStore store;
+  private final RunbookExecutionStore executions;
 
-  public RunbookController(RunbookStore store) { this.store = store; }
+  public RunbookController(RunbookStore store, RunbookExecutionStore executions) {
+    this.store = store;
+    this.executions = executions;
+  }
 
   @GetMapping
   public List<RunbookStore.Runbook> list() { return store.list(); }
@@ -53,6 +57,14 @@ public class RunbookController {
     }
     return store.rollback(id, request.targetVersion(), request.expectedVersion())
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "runbook not found, revision missing, or version changed"));
+  }
+
+  @GetMapping("/{id}/executions")
+  public List<RunbookExecutionStore.Execution> executions(@PathVariable String id) {
+    if (store.find(id).isEmpty()) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "runbook not found");
+    }
+    return executions.list(id, 50);
   }
 
   @DeleteMapping("/{id}")
