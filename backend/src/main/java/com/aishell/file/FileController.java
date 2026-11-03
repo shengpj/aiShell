@@ -9,6 +9,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -81,8 +83,33 @@ public class FileController {
         .body(result.data());
   }
 
+  @PostMapping("/rename")
+  public Map<String, Object> rename(@RequestBody(required = false) FileRenameRequest request) {
+    requireSession(request == null ? null : request.session());
+    FileService.FileRenameResult result = files.rename(liveSession(request.session()), request.from(), request.to());
+    audit.recordFileRename(request.session(), result.from(), result.to());
+    return Map.of("from", result.from(), "to", result.to(), "type", result.type());
+  }
+
+  @DeleteMapping("/entry")
+  public Map<String, Object> delete(
+      @RequestParam("session") String session, @RequestParam("path") String path) {
+    requireSession(session);
+    FileService.FileDeleteResult result = files.delete(liveSession(session), path);
+    audit.recordFileDelete(session, result.path(), result.type());
+    return Map.of("path", result.path(), "type", result.type());
+  }
+
   public record FileWriteRequest(
       String session, String path, String content, Long expectedModifiedAt) {}
+
+  public record FileRenameRequest(String session, String from, String to) {}
+
+  private static void requireSession(String session) {
+    if (session == null || session.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "session is required");
+    }
+  }
 
   private Session liveSession(String session) {
     return terminals

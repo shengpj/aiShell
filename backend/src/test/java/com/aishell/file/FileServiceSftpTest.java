@@ -40,6 +40,7 @@ class FileServiceSftpTest {
     Files.writeString(root.resolve("dirA/sub/file.txt"), "nested\n");
     Files.writeString(root.resolve("notes.txt"), "你好 SFTP\nline2\n");
     Files.writeString(root.resolve("editable.txt"), "before\n");
+    Files.writeString(root.resolve("rename.txt"), "rename me\n");
     Files.write(root.resolve("bin.dat"), new byte[] {'a', 0, 'b'});
     Files.write(root.resolve("pic.png"), PNG);
     byte[] large = new byte[300_000];
@@ -202,6 +203,31 @@ class FileServiceSftpTest {
     assertStatus(HttpStatus.BAD_REQUEST, () -> files.preview(session, "/dirA"));
     assertStatus(HttpStatus.NOT_FOUND, () -> files.list(session, "/nope"));
     assertStatus(HttpStatus.NOT_FOUND, () -> files.preview(session, "/nope.txt"));
+  }
+
+  @Test
+  void renamesWithoutOverwritingAndDeletesFilesOrEmptyDirectories() {
+    FileService.FileRenameResult renamed = files.rename(session, "/rename.txt", "/renamed.txt");
+    assertThat(renamed.type()).isEqualTo("file");
+    assertThat(files.preview(session, "/renamed.txt").text()).isEqualTo("rename me\n");
+    assertStatus(HttpStatus.CONFLICT, () -> files.rename(session, "/editable.txt", "/renamed.txt"));
+
+    assertThat(files.delete(session, "/renamed.txt").type()).isEqualTo("file");
+    assertStatus(HttpStatus.NOT_FOUND, () -> files.preview(session, "/renamed.txt"));
+    // The SFTP fixture exposes a virtual filesystem; create an empty directory through the host
+    // fixture only when this test runs so the directory-count assertion remains stable.
+    try {
+      Files.createDirectories(root.resolve("empty-dir"));
+    } catch (IOException e) {
+      throw new IllegalStateException(e);
+    }
+    assertThat(files.delete(session, "/empty-dir").type()).isEqualTo("dir");
+  }
+
+  @Test
+  void refusesNonEmptyDirectoryAndRootDeletion() {
+    assertStatus(HttpStatus.BAD_GATEWAY, () -> files.delete(session, "/dirA"));
+    assertStatus(HttpStatus.BAD_REQUEST, () -> files.delete(session, "/"));
   }
 
   private static FileEntry entry(FileListing listing, String name) {

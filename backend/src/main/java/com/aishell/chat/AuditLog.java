@@ -86,6 +86,20 @@ public class AuditLog implements UserCommandListener {
     append(entry);
   }
 
+  public void recordFileRename(String session, String from, String to) {
+    Map<String, Object> entry = baseEntry("file_rename", "user", session, from);
+    entry.put("path", from);
+    entry.put("to", to);
+    append(entry);
+  }
+
+  public void recordFileDelete(String session, String path, String type) {
+    Map<String, Object> entry = baseEntry("file_delete", "user", session, path);
+    entry.put("path", path);
+    entry.put("fileType", type);
+    append(entry);
+  }
+
   /** Reads recent command records for the currently connected terminal session. */
   public History history(String session, String query, int limit) {
     String needle = query == null ? "" : query.trim().toLowerCase();

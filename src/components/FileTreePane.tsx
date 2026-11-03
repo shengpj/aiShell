@@ -2,8 +2,10 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { confirmAction } from "../api/confirm";
 import {
   downloadFile,
+  deleteFile,
   listFiles,
   previewFile,
+  renameFile,
   writeTextFile,
   type FileEntry,
   type FileListing,
@@ -121,6 +123,8 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
   const [editing, setEditing] = useState(false);
   const [fileActionBusy, setFileActionBusy] = useState(false);
   const [fileActionError, setFileActionError] = useState<string | null>(null);
+  const [entryMenu, setEntryMenu] = useState<FileEntry | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
@@ -273,6 +277,39 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
     setError(null);
     void loadDir(sessionId, cwd);
     void reveal(sessionId, cwd);
+  };
+
+  const beginRename = (entry: FileEntry) => {
+    setEntryMenu(entry);
+    setRenameValue(entry.name);
+    setFileActionError(null);
+  };
+
+  const performRename = async () => {
+    if (!sessionId || !entryMenu || !renameValue.trim() || fileActionBusy) return;
+    const target = `${parentPath(entryMenu.path)}/${renameValue.trim()}`.replace("//", "/");
+    if (!(await confirmAction(`重命名远程${entryMenu.type === "dir" ? "目录" : "文件"}？\n\n${entryMenu.path}\n→ ${target}`, "重命名远程文件", "重命名"))) return;
+    setFileActionBusy(true); setFileActionError(null);
+    try {
+      await renameFile(sessionId, entryMenu.path, target);
+      setNotice(`已重命名为 ${target}，操作已记入审计日志。`);
+      setEntryMenu(null); refresh();
+    } catch (cause) { setFileActionError(message(cause)); }
+    finally { setFileActionBusy(false); }
+  };
+
+  const performDelete = async (entry: FileEntry) => {
+    if (!sessionId || fileActionBusy) return;
+    const warning = entry.type === "dir" ? "仅允许删除空目录。" : "文件内容将被删除。";
+    if (!(await confirmAction(`删除远程${entry.type === "dir" ? "目录" : "文件"}？\n\n${entry.path}\n\n${warning}`, "删除远程文件", "删除"))) return;
+    setFileActionBusy(true); setFileActionError(null);
+    try {
+      await deleteFile(sessionId, entry.path);
+      setNotice(`已删除 ${entry.path}，操作已记入审计日志。`);
+      if (previewPath === entry.path) closePreview();
+      refresh();
+    } catch (cause) { setFileActionError(message(cause)); }
+    finally { setFileActionBusy(false); }
   };
 
   const openPreview = async (entry: FileEntry) => {
@@ -531,7 +568,7 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
                   </thead>
                   <tbody>
                     {entries.map((entry) => (
-                      <tr key={entry.path} className={entry.type === "dir" ? "file-row-dir" : ""}>
+                      <tr key={entry.path} className={entry.type === "dir" ? "file-row-dir" : ""} onContextMenu={(event) => { event.preventDefault(); setEntryMenu(entry); setRenameValue(entry.name); }}>
                         <td className="file-name-cell">
                           <button
                             className={`file-name file-${entry.type}`}
@@ -553,6 +590,10 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
                         </td>
                         <td className="file-owner" title={`${entry.owner}/${entry.group}`}>
                           {entry.owner}/{entry.group}
+                        </td>
+                        <td className="file-actions-cell">
+                          <button className="icon-button" type="button" title="重命名" onClick={() => beginRename(entry)}>✎</button>
+                          <button className="icon-button file-delete-button" type="button" title="删除" onClick={() => void performDelete(entry)}>⌫</button>
                         </td>
                       </tr>
                     ))}
@@ -654,6 +695,14 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
             )}
           </div>
           {preview?.truncated && <p className="file-preview-hint">仅显示文件前 256 KB。</p>}
+        </div>
+      )}
+      {entryMenu && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEntryMenu(null); }}>
+          <div className="modal file-action-modal" role="dialog" aria-modal="true" aria-label="重命名远程文件">
+            <div className="modal-head"><span>重命名远程{entryMenu.type === "dir" ? "目录" : "文件"}</span><button className="icon-button" type="button" aria-label="关闭" onClick={() => setEntryMenu(null)}>×</button></div>
+            <div className="modal-body"><p className="form-hint">{entryMenu.path}</p><input className="field field-wide" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} autoFocus onKeyDown={(event) => { if (event.key === "Enter") void performRename(); }} /><div className="form-actions"><button className="connect-button" type="button" disabled={!renameValue.trim() || fileActionBusy} onClick={() => void performRename()}>重命名</button><button className="ghost-button" type="button" onClick={() => setEntryMenu(null)}>取消</button></div></div>
+          </div>
         </div>
       )}
     </section>

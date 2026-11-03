@@ -1947,6 +1947,29 @@ body {
   width: 88px;
 }
 
+.file-actions-cell {
+  width: 64px;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.file-actions-cell .icon-button {
+  opacity: 0.35;
+}
+
+.file-table tbody tr:hover .file-actions-cell .icon-button,
+.file-actions-cell .icon-button:focus {
+  opacity: 1;
+}
+
+.file-delete-button:hover:not(:disabled) {
+  color: var(--red, #e97979);
+}
+
+.file-action-modal {
+  width: min(460px, 100%);
+}
+
 .file-name {
   display: flex;
   align-items: center;

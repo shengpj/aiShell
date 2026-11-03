@@ -61,6 +61,10 @@ public class FileService {
 
   public record FileDownload(String path, String name, String mime, byte[] data) {}
 
+  public record FileRenameResult(String from, String to, String type) {}
+
+  public record FileDeleteResult(String path, String type) {}
+
   static final int MAX_ENTRIES = 2000;
   static final int TEXT_LIMIT = 256 * 1024;
   static final int IMAGE_LIMIT = 4 * 1024 * 1024;
@@ -251,6 +255,76 @@ public class FileService {
     }
   }
 
+  public FileRenameResult rename(Session session, String from, String to) {
+    if (from == null || from.isBlank() || to == null || to.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "source and target paths are required");
+    }
+    String source = from.trim();
+    String target = to.trim();
+    if (source.equals(target)) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "source and target paths must differ");
+    }
+    if (!parentOf(source).equals(parentOf(target)) || target.endsWith("/") || target.endsWith("/.") || target.endsWith("/..")) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "rename must stay in the source directory");
+    }
+    ChannelSftp channel = open(session);
+    try {
+      SftpATTRS attrs = channel.lstat(source);
+      String type = typeOf(attrs);
+      if (attrs.isLink()) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "links cannot be renamed");
+      }
+      try {
+        channel.lstat(target);
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "target path already exists: " + target);
+      } catch (SftpException e) {
+        if (e.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) {
+          throw e;
+        }
+      }
+      channel.rename(source, target);
+      return new FileRenameResult(source, target, type);
+    } catch (ResponseStatusException e) {
+      throw e;
+    } catch (SftpException e) {
+      throw failure(e, source);
+    } finally {
+      channel.disconnect();
+    }
+  }
+
+  public FileDeleteResult delete(Session session, String path) {
+    if (path == null || path.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "path is required");
+    }
+    String target = path.trim();
+    if (target.equals("/") || target.equals(".")) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "root directory cannot be deleted");
+    }
+    ChannelSftp channel = open(session);
+    try {
+      SftpATTRS attrs = channel.lstat(target);
+      if (attrs.isLink()) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "links cannot be deleted");
+      }
+      String type = typeOf(attrs);
+      if (attrs.isDir()) {
+        channel.rmdir(target);
+      } else if (attrs.isReg()) {
+        channel.rm(target);
+      } else {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unsupported file type");
+      }
+      return new FileDeleteResult(target, type);
+    } catch (ResponseStatusException e) {
+      throw e;
+    } catch (SftpException e) {
+      throw failure(e, target);
+    } finally {
+      channel.disconnect();
+    }
+  }
+
   private static ChannelSftp open(Session session) {
     try {
       ChannelSftp channel = (ChannelSftp) session.openChannel("sftp");
@@ -354,6 +428,11 @@ public class FileService {
 
   private static String childPath(String parent, String name) {
     return parent.endsWith("/") ? parent + name : parent + "/" + name;
+  }
+
+  private static String parentOf(String path) {
+    int slash = path.lastIndexOf('/');
+    return slash <= 0 ? "/" : path.substring(0, slash);
   }
 
   private static ResponseStatusException failure(SftpException e, String path) {

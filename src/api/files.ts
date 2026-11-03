@@ -106,6 +106,26 @@ export function writeTextFile(
   });
 }
 
+export interface FileRenameResult { from: string; to: string; type: FileType }
+export interface FileDeleteResult { path: string; type: FileType }
+
+export function renameFile(session: string, from: string, to: string): Promise<FileRenameResult> {
+  return requestJson<FileRenameResult>("/api/files/rename", "POST", { session, from, to });
+}
+
+export async function deleteFile(session: string, path: string): Promise<FileDeleteResult> {
+  const info = await getBackendInfo();
+  if (info.status !== "ready") throw new Error(info.error ?? "后端尚未就绪");
+  const { ticket } = await getBackendTicket("files");
+  const response = await fetch(
+    `${info.baseUrl}/api/files/entry?session=${encodeURIComponent(session)}&path=${encodeURIComponent(path)}`,
+    { method: "DELETE", headers: { "X-AI-Shell-Ticket": ticket } },
+  );
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(payload?.detail ?? payload?.message ?? `请求失败（HTTP ${response.status}）`);
+  return payload as FileDeleteResult;
+}
+
 export async function downloadFile(session: string, path: string): Promise<Blob> {
   const info = await getBackendInfo();
   if (info.status !== "ready") {
