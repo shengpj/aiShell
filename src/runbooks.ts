@@ -4,6 +4,12 @@ export interface RunbookField {
   placeholder: string;
 }
 
+export interface RunbookBranch {
+  condition: string;
+  thenSteps: string[];
+  elseSteps: string[];
+}
+
 export interface Runbook {
   id: string;
   title: string;
@@ -12,6 +18,7 @@ export interface Runbook {
   fields: RunbookField[];
   steps: string[];
   success: string[];
+  branches: RunbookBranch[];
 }
 
 export const RUNBOOKS: Runbook[] = [
@@ -29,6 +36,7 @@ export const RUNBOOKS: Runbook[] = [
       "systemctl --failed --no-pager（如果不是 systemd，说明并跳过）",
     ],
     success: ["列出主机基本信息和资源状态", "指出异常阈值或失败服务", "给出按优先级排序的下一步检查建议"],
+    branches: [],
   },
   {
     id: "service-troubleshoot",
@@ -43,6 +51,7 @@ export const RUNBOOKS: Runbook[] = [
       "ss -lntup",
     ],
     success: ["确认服务当前状态和最近失败原因", "从日志中提取关键错误时间线", "核对服务可能使用的监听端口并给出下一步建议"],
+    branches: [],
   },
   {
     id: "log-triage",
@@ -56,6 +65,7 @@ export const RUNBOOKS: Runbook[] = [
       "grep -Ein 'error|fail|fatal|panic|timeout|denied' {{path}} | tail -n 100",
     ],
     success: ["先说明文件是否存在及最近修改时间", "按时间顺序归纳错误模式", "区分直接错误、伴随告警和需要验证的推断"],
+    branches: [],
   },
 ];
 
@@ -78,6 +88,14 @@ export function buildRunbookPrompt(runbook: Runbook, values: Record<string, stri
     .map((step, index) => `${index + 1}. ${interpolate(runbook, values, step)}`)
     .join("\n");
   const success = runbook.success.map((item) => `- ${item}`).join("\n");
+  const branches = runbook.branches.length === 0
+    ? "无"
+    : runbook.branches.map((branch, index) => [
+        `${index + 1}. 判断条件：${interpolate(runbook, values, branch.condition)}`,
+        `   条件满足时：\n${branch.thenSteps.map((step) => `   - ${interpolate(runbook, values, step)}`).join("\n")}`,
+        `   条件不满足时：\n${branch.elseSteps.length ? branch.elseSteps.map((step) => `   - ${interpolate(runbook, values, step)}`).join("\n") : "   - 跳过并记录原因"}`,
+      ].join("\n"))
+      .join("\n");
   return `请按下面的运维 Runbook 逐步执行并汇报结果。
 
 Runbook：${runbook.title}
@@ -88,9 +106,13 @@ Runbook：${runbook.title}
 - 每次只执行一个命令，先说明当前步骤，再读取退出码和输出。
 - 命令不适用于当前系统时，记录原因并跳过，不要用替代命令掩盖失败。
 - 不要猜测未提供的环境信息；发现高风险操作需求时先停止并说明。
+- 遇到条件分支时，先用已获得的事实判断条件；条件不明确时不要执行分支命令，记录为未验证。
 
 步骤：
 ${steps}
+
+条件分支：
+${branches}
 
 完成标准：
 ${success}

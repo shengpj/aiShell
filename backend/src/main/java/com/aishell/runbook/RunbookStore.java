@@ -24,6 +24,8 @@ public class RunbookStore {
 
   public record Field(String id, String label, String placeholder) {}
 
+  public record Branch(String condition, List<String> thenSteps, List<String> elseSteps) {}
+
   public record Runbook(
       String id,
       String title,
@@ -32,6 +34,7 @@ public class RunbookStore {
       List<Field> fields,
       List<String> steps,
       List<String> success,
+      List<Branch> branches,
       int version,
       String createdAt,
       String updatedAt) {}
@@ -45,6 +48,7 @@ public class RunbookStore {
       List<Field> fields,
       List<String> steps,
       List<String> success,
+      List<Branch> branches,
       String createdAt) {}
 
   private final String url;
@@ -73,29 +77,29 @@ public class RunbookStore {
   }
 
   public synchronized Runbook insert(String title, String summary, String category,
-      List<Field> fields, List<String> steps, List<String> success) {
+      List<Field> fields, List<String> steps, List<String> success, List<Branch> branches) {
     String id = UUID.randomUUID().toString();
     String now = Instant.now().toString();
-    update("INSERT INTO runbook(id,title,summary,category,fields_json,steps_json,success_json,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-        id, title, summary, category, encode(fields), encode(steps), encode(success), 1, now, now);
-    insertRevision(id, 1, title, summary, category, fields, steps, success, now);
-    return new Runbook(id, title, summary, category, List.copyOf(fields), List.copyOf(steps), List.copyOf(success), 1, now, now);
+    update("INSERT INTO runbook(id,title,summary,category,fields_json,steps_json,success_json,branches_json,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        id, title, summary, category, encode(fields), encode(steps), encode(success), encode(branches), 1, now, now);
+    insertRevision(id, 1, title, summary, category, fields, steps, success, branches, now);
+    return new Runbook(id, title, summary, category, List.copyOf(fields), List.copyOf(steps), List.copyOf(success), List.copyOf(branches), 1, now, now);
   }
 
   public synchronized Optional<Runbook> update(String id, String title, String summary, String category,
-      List<Field> fields, List<String> steps, List<String> success, int expectedVersion) {
+      List<Field> fields, List<String> steps, List<String> success, List<Branch> branches, int expectedVersion) {
     String now = Instant.now().toString();
     try (Connection connection = open()) {
       connection.setAutoCommit(false);
       try (PreparedStatement statement = connection.prepareStatement(
-          "UPDATE runbook SET title=?,summary=?,category=?,fields_json=?,steps_json=?,success_json=?,version=version+1,updated_at=? WHERE id=? AND deleted_at IS NULL AND version=?")) {
-        bind(statement, new Object[] {title, summary, category, encode(fields), encode(steps), encode(success), now, id, expectedVersion});
+          "UPDATE runbook SET title=?,summary=?,category=?,fields_json=?,steps_json=?,success_json=?,branches_json=?,version=version+1,updated_at=? WHERE id=? AND deleted_at IS NULL AND version=?")) {
+        bind(statement, new Object[] {title, summary, category, encode(fields), encode(steps), encode(success), encode(branches), now, id, expectedVersion});
         if (statement.executeUpdate() == 0) {
           connection.rollback();
           return Optional.empty();
         }
       }
-      insertRevision(connection, id, expectedVersion + 1, title, summary, category, fields, steps, success, now);
+      insertRevision(connection, id, expectedVersion + 1, title, summary, category, fields, steps, success, branches, now);
       connection.commit();
       return find(id);
     } catch (SQLException e) {
@@ -111,7 +115,7 @@ public class RunbookStore {
     Optional<Revision> target = revisionQuery("SELECT * FROM runbook_revision WHERE runbook_id = ? AND version = ?", id, targetVersion).stream().findFirst();
     if (target.isEmpty()) return Optional.empty();
     Revision revision = target.get();
-    return update(id, revision.title(), revision.summary(), revision.category(), revision.fields(), revision.steps(), revision.success(), expectedVersion);
+    return update(id, revision.title(), revision.summary(), revision.category(), revision.fields(), revision.steps(), revision.success(), revision.branches(), expectedVersion);
   }
 
   public synchronized boolean delete(String id) {
@@ -128,6 +132,7 @@ public class RunbookStore {
           result.add(new Runbook(rs.getString("id"), rs.getString("title"), rs.getString("summary"),
               rs.getString("category"), decodeFields(rs.getString("fields_json")),
               decodeStrings(rs.getString("steps_json")), decodeStrings(rs.getString("success_json")),
+              decodeBranches(rs.getString("branches_json")),
               rs.getInt("version"), rs.getString("created_at"), rs.getString("updated_at")));
         }
       }
@@ -147,16 +152,16 @@ public class RunbookStore {
   }
 
   private void insertRevision(String id, int version, String title, String summary, String category,
-      List<Field> fields, List<String> steps, List<String> success, String createdAt) {
-    update("INSERT INTO runbook_revision(runbook_id,version,title,summary,category,fields_json,steps_json,success_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-        id, version, title, summary, category, encode(fields), encode(steps), encode(success), createdAt);
+      List<Field> fields, List<String> steps, List<String> success, List<Branch> branches, String createdAt) {
+    update("INSERT INTO runbook_revision(runbook_id,version,title,summary,category,fields_json,steps_json,success_json,branches_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        id, version, title, summary, category, encode(fields), encode(steps), encode(success), encode(branches), createdAt);
   }
 
   private void insertRevision(Connection connection, String id, int version, String title, String summary, String category,
-      List<Field> fields, List<String> steps, List<String> success, String createdAt) throws SQLException {
+      List<Field> fields, List<String> steps, List<String> success, List<Branch> branches, String createdAt) throws SQLException {
     try (PreparedStatement statement = connection.prepareStatement(
-        "INSERT INTO runbook_revision(runbook_id,version,title,summary,category,fields_json,steps_json,success_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)")) {
-      bind(statement, new Object[] {id, version, title, summary, category, encode(fields), encode(steps), encode(success), createdAt});
+        "INSERT INTO runbook_revision(runbook_id,version,title,summary,category,fields_json,steps_json,success_json,branches_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")) {
+      bind(statement, new Object[] {id, version, title, summary, category, encode(fields), encode(steps), encode(success), encode(branches), createdAt});
       statement.executeUpdate();
     }
   }
@@ -169,7 +174,7 @@ public class RunbookStore {
         while (rs.next()) {
           result.add(new Revision(rs.getString("runbook_id"), rs.getInt("version"), rs.getString("title"),
               rs.getString("summary"), rs.getString("category"), decodeFields(rs.getString("fields_json")),
-              decodeStrings(rs.getString("steps_json")), decodeStrings(rs.getString("success_json")), rs.getString("created_at")));
+              decodeStrings(rs.getString("steps_json")), decodeStrings(rs.getString("success_json")), decodeBranches(rs.getString("branches_json")), rs.getString("created_at")));
         }
       }
       return result;
@@ -197,10 +202,18 @@ public class RunbookStore {
     catch (RuntimeException e) { throw new IllegalStateException("failed to decode runbook steps", e); }
   }
 
+  private List<Branch> decodeBranches(String value) {
+    if (value == null || value.isBlank()) return List.of();
+    try { return json.readValue(value, new TypeReference<List<Branch>>() {}); }
+    catch (RuntimeException e) { throw new IllegalStateException("failed to decode runbook branches", e); }
+  }
+
   private void initSchema() throws SQLException {
     try (Connection connection = open(); Statement statement = connection.createStatement()) {
       statement.execute("CREATE TABLE IF NOT EXISTS runbook(id TEXT PRIMARY KEY,title TEXT NOT NULL,summary TEXT NOT NULL,category TEXT NOT NULL,fields_json TEXT NOT NULL,steps_json TEXT NOT NULL,success_json TEXT NOT NULL,version INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,deleted_at TEXT)");
-      statement.execute("CREATE TABLE IF NOT EXISTS runbook_revision(runbook_id TEXT NOT NULL,version INTEGER NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL,category TEXT NOT NULL,fields_json TEXT NOT NULL,steps_json TEXT NOT NULL,success_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(runbook_id,version))");
+      try { statement.execute("ALTER TABLE runbook ADD COLUMN branches_json TEXT NOT NULL DEFAULT '[]'"); } catch (SQLException ignored) {}
+      statement.execute("CREATE TABLE IF NOT EXISTS runbook_revision(runbook_id TEXT NOT NULL,version INTEGER NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL,category TEXT NOT NULL,fields_json TEXT NOT NULL,steps_json TEXT NOT NULL,success_json TEXT NOT NULL,branches_json TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL,PRIMARY KEY(runbook_id,version))");
+      try { statement.execute("ALTER TABLE runbook_revision ADD COLUMN branches_json TEXT NOT NULL DEFAULT '[]'"); } catch (SQLException ignored) {}
     }
   }
 

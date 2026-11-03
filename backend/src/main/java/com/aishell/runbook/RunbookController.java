@@ -26,14 +26,14 @@ public class RunbookController {
   public RunbookStore.Runbook create(@RequestBody(required = false) RunbookRequest request) {
     validate(request);
     return store.insert(request.title().trim(), request.summary().trim(), request.category().trim(),
-        request.fields(), request.steps(), request.success());
+        request.fields(), request.steps(), request.success(), request.branches());
   }
 
   @PutMapping("/{id}")
   public RunbookStore.Runbook update(@PathVariable String id, @RequestBody(required = false) RunbookRequest request) {
     validate(request);
     return store.update(id, request.title().trim(), request.summary().trim(), request.category().trim(),
-            request.fields(), request.steps(), request.success(), request.version())
+            request.fields(), request.steps(), request.success(), request.branches(), request.version())
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "runbook not found or version changed"));
   }
 
@@ -63,22 +63,32 @@ public class RunbookController {
   private static void validate(RunbookRequest request) {
     if (request == null || blank(request.title()) || blank(request.summary()) || blank(request.category())
         || request.steps() == null || request.steps().isEmpty() || request.success() == null || request.success().isEmpty()
-        || request.fields() == null) {
-      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "title, summary, category, fields, steps and success are required");
+        || request.fields() == null || request.branches() == null) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "title, summary, category, fields, steps, success and branches are required");
     }
     if (request.title().length() > 120 || request.summary().length() > 500 || request.category().length() > 80
-        || request.steps().size() > 50 || request.success().size() > 20 || request.fields().size() > 20) {
+        || request.steps().size() > 50 || request.success().size() > 20 || request.fields().size() > 20 || request.branches().size() > 20) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "runbook is too large");
     }
     request.steps().forEach(step -> { if (blank(step) || step.length() > 1000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid step"); });
     request.success().forEach(item -> { if (blank(item) || item.length() > 500) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid success criterion"); });
     request.fields().forEach(field -> { if (field == null || blank(field.id()) || blank(field.label()) || field.id().length() > 40 || field.label().length() > 100) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid field"); });
+    request.branches().forEach(branch -> {
+      if (branch == null || blank(branch.condition()) || branch.condition().length() > 500
+          || branch.thenSteps() == null || branch.thenSteps().isEmpty() || branch.thenSteps().size() > 20
+          || branch.elseSteps() == null || branch.elseSteps().size() > 20) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid branch");
+      }
+      branch.thenSteps().forEach(step -> { if (blank(step) || step.length() > 1000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid branch step"); });
+      branch.elseSteps().forEach(step -> { if (blank(step) || step.length() > 1000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid branch fallback step"); });
+    });
   }
 
   private static boolean blank(String value) { return value == null || value.isBlank(); }
 
   public record RunbookRequest(String title, String summary, String category,
-      List<RunbookStore.Field> fields, List<String> steps, List<String> success, int version) {}
+      List<RunbookStore.Field> fields, List<String> steps, List<String> success,
+      List<RunbookStore.Branch> branches, int version) {}
 
   public record RollbackRequest(int targetVersion, int expectedVersion) {}
 }

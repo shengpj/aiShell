@@ -13,7 +13,7 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
   const [selectedId, setSelectedId] = useState(RUNBOOKS[0]?.id ?? "");
   const [values, setValues] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<CustomRunbook>({ id: "", title: "", summary: "", category: "自定义", fields: [], steps: [""], success: [""], version: 1, createdAt: "", updatedAt: "" });
+  const [draft, setDraft] = useState<CustomRunbook>({ id: "", title: "", summary: "", category: "自定义", fields: [], steps: [""], success: [""], branches: [], version: 1, createdAt: "", updatedAt: "" });
   const [error, setError] = useState<string | null>(null);
   const [revisions, setRevisions] = useState<RunbookRevision[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -50,9 +50,10 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
 
   const canUse = selected.fields.every((field) => values[field.id]?.trim());
   const isCustom = custom.some((item) => item.id === selected.id);
+  const branchesValid = draft.branches.every((branch) => branch.condition.trim() && branch.thenSteps.some((step) => step.trim()));
   const save = async () => {
     try {
-      const input = { ...draft, steps: draft.steps.filter(Boolean), success: draft.success.filter(Boolean) };
+      const input = { ...draft, steps: draft.steps.filter(Boolean), success: draft.success.filter(Boolean), branches: draft.branches.map((branch) => ({ ...branch, thenSteps: branch.thenSteps.filter(Boolean), elseSteps: branch.elseSteps.filter(Boolean) })) };
       const saved = draft.id ? await updateCustomRunbook(draft.id, input) : await createCustomRunbook(input);
       setCustom((current) => draft.id ? current.map((item) => item.id === saved.id ? saved : item) : [saved, ...current]);
       setSelectedId(saved.id); setEditing(false); setError(null);
@@ -108,7 +109,7 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
                 <span className="runbook-card-summary">{runbook.summary}</span>
               </button>
             ))}
-            <button className="runbook-card runbook-add" type="button" onClick={() => { setDraft({ id: "", title: "", summary: "", category: "自定义", fields: [], steps: [""], success: [""], version: 1, createdAt: "", updatedAt: "" }); setEditing(true); }}>+ 新建 Runbook</button>
+            <button className="runbook-card runbook-add" type="button" onClick={() => { setDraft({ id: "", title: "", summary: "", category: "自定义", fields: [], steps: [""], success: [""], branches: [], version: 1, createdAt: "", updatedAt: "" }); setEditing(true); }}>+ 新建 Runbook</button>
           </div>
           <div className="runbook-detail">
             {error && <p className="conn-error">{error}</p>}
@@ -119,8 +120,20 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
                 <label>分类<input className="field field-wide" value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} /></label>
                 <label>步骤（每行一条命令或说明）<textarea className="runbook-editor" value={draft.steps.join("\n")} onChange={(event) => setDraft({ ...draft, steps: event.target.value.split(/\r?\n/) })} /></label>
                 <label>完成标准（每行一条）<textarea className="runbook-editor" value={draft.success.join("\n")} onChange={(event) => setDraft({ ...draft, success: event.target.value.split(/\r?\n/) })} /></label>
+                <div>
+                  <span className="runbook-section-title">条件分支</span>
+                  {draft.branches.map((branch, index) => (
+                    <div className="runbook-branch-editor" key={index}>
+                      <input className="field field-wide" placeholder="判断条件，例如：服务状态不是 active" value={branch.condition} onChange={(event) => setDraft({ ...draft, branches: draft.branches.map((item, i) => i === index ? { ...item, condition: event.target.value } : item) })} />
+                      <textarea className="runbook-editor" placeholder="条件满足时，每行一条" value={branch.thenSteps.join("\n")} onChange={(event) => setDraft({ ...draft, branches: draft.branches.map((item, i) => i === index ? { ...item, thenSteps: event.target.value.split(/\r?\n/) } : item) })} />
+                      <textarea className="runbook-editor" placeholder="条件不满足时，可留空" value={branch.elseSteps.join("\n")} onChange={(event) => setDraft({ ...draft, branches: draft.branches.map((item, i) => i === index ? { ...item, elseSteps: event.target.value.split(/\r?\n/).filter(Boolean) } : item) })} />
+                      <button className="ghost-button" type="button" onClick={() => setDraft({ ...draft, branches: draft.branches.filter((_, i) => i !== index) })}>移除分支</button>
+                    </div>
+                  ))}
+                  <button className="ghost-button" type="button" onClick={() => setDraft({ ...draft, branches: [...draft.branches, { condition: "", thenSteps: [""], elseSteps: [] }] })}>+ 添加条件分支</button>
+                </div>
                 <p className="form-hint">参数字段可在步骤中使用 {"{{name}}"}，保存后会在 Runbook 列表中持久化。</p>
-                <div className="form-actions"><button className="connect-button" type="button" disabled={!draft.title.trim() || !draft.summary.trim() || !draft.steps.some(Boolean) || !draft.success.some(Boolean)} onClick={() => void save()}>保存</button><button className="ghost-button" type="button" onClick={() => setEditing(false)}>取消</button></div>
+                <div className="form-actions"><button className="connect-button" type="button" disabled={!draft.title.trim() || !draft.summary.trim() || !draft.steps.some(Boolean) || !draft.success.some(Boolean) || !branchesValid} onClick={() => void save()}>保存</button><button className="ghost-button" type="button" onClick={() => setEditing(false)}>取消</button></div>
               </>
             ) : historyOpen && isCustom ? (
               <>

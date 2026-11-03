@@ -1408,6 +1408,16 @@ body {
   white-space: nowrap;
 }
 
+.runbook-branch-editor {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-alt);
+}
+
 .runbook-card-title {
   font-size: 12px;
   font-weight: 600;

@@ -1,18 +1,19 @@
 import { getBackendInfo, getBackendTicket } from "./backend";
 
 export interface CustomRunbookField { id: string; label: string; placeholder: string }
+export interface CustomRunbookBranch { condition: string; thenSteps: string[]; elseSteps: string[] }
 export interface CustomRunbook {
   id: string; title: string; summary: string; category: string;
-  fields: CustomRunbookField[]; steps: string[]; success: string[];
+  fields: CustomRunbookField[]; steps: string[]; success: string[]; branches: CustomRunbookBranch[];
   version: number; createdAt: string; updatedAt: string;
 }
 export interface CustomRunbookInput {
   title: string; summary: string; category: string; fields: CustomRunbookField[];
-  steps: string[]; success: string[]; version?: number;
+  steps: string[]; success: string[]; branches: CustomRunbookBranch[]; version?: number;
 }
 export interface RunbookRevision {
   runbookId: string; version: number; title: string; summary: string; category: string;
-  fields: CustomRunbookField[]; steps: string[]; success: string[]; createdAt: string;
+  fields: CustomRunbookField[]; steps: string[]; success: string[]; branches: CustomRunbookBranch[]; createdAt: string;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
