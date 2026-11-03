@@ -108,6 +108,28 @@ export function writeTextFile(
 
 export interface FileRenameResult { from: string; to: string; type: FileType }
 export interface FileDeleteResult { path: string; type: FileType }
+export interface FileUploadResult { path: string; name: string; size: number; modifiedAt: number }
+
+export async function uploadFile(session: string, directory: string, file: File): Promise<FileUploadResult> {
+  const info = await getBackendInfo();
+  if (info.status !== "ready") throw new Error(info.error ?? "后端尚未就绪");
+  const { ticket } = await getBackendTicket("files");
+  const form = new FormData();
+  form.set("session", session);
+  form.set("directory", directory);
+  form.set("file", file, file.name);
+  const response = await fetch(`${info.baseUrl}/api/files/upload`, {
+    method: "POST",
+    headers: { "X-AI-Shell-Ticket": ticket },
+    body: form,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = payload?.detail ?? payload?.message ?? payload?.title;
+    throw new Error(typeof detail === "string" && detail ? detail : `请求失败（HTTP ${response.status}）`);
+  }
+  return payload as FileUploadResult;
+}
 
 export function renameFile(session: string, from: string, to: string): Promise<FileRenameResult> {
   return requestJson<FileRenameResult>("/api/files/rename", "POST", { session, from, to });

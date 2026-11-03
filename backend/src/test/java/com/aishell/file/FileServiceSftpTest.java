@@ -9,6 +9,7 @@ import com.aishell.file.FileService.FilePreview;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import java.io.IOException;
+import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -228,6 +229,52 @@ class FileServiceSftpTest {
   void refusesNonEmptyDirectoryAndRootDeletion() {
     assertStatus(HttpStatus.BAD_GATEWAY, () -> files.delete(session, "/dirA"));
     assertStatus(HttpStatus.BAD_REQUEST, () -> files.delete(session, "/"));
+  }
+
+  @Test
+  void uploadsWithoutOverwritingAndKeepsTheRemoteFileBounded() {
+    FileService.FileUploadResult result =
+        files.upload(
+            session,
+            ".",
+            "uploaded.txt",
+            new ByteArrayInputStream("uploaded\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+            9);
+
+    assertThat(result.path()).isEqualTo("/uploaded.txt");
+    assertThat(files.preview(session, "/uploaded.txt").text()).isEqualTo("uploaded\n");
+    assertStatus(
+        HttpStatus.CONFLICT,
+        () ->
+            files.upload(
+                session,
+                ".",
+                "uploaded.txt",
+                new ByteArrayInputStream(new byte[] {1}),
+                1));
+    assertStatus(
+        HttpStatus.PAYLOAD_TOO_LARGE,
+        () ->
+            files.upload(
+                session,
+                ".",
+                "too-large.bin",
+                new ByteArrayInputStream(new byte[FileService.IMAGE_LIMIT + 1]),
+                FileService.IMAGE_LIMIT + 1));
+  }
+
+  @Test
+  void rejectsNonDirectoryAndNestedUploadNames() {
+    assertStatus(
+        HttpStatus.BAD_REQUEST,
+        () ->
+            files.upload(
+                session, "/notes.txt", "new.txt", new ByteArrayInputStream(new byte[] {1}), 1));
+    assertStatus(
+        HttpStatus.BAD_REQUEST,
+        () ->
+            files.upload(
+                session, ".", "nested/new.txt", new ByteArrayInputStream(new byte[] {1}), 1));
   }
 
   private static FileEntry entry(FileListing listing, String name) {

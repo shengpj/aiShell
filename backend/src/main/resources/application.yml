@@ -7,6 +7,10 @@ spring:
     name: ai-shell-backend
   main:
     banner-mode: off
+  servlet:
+    multipart:
+      max-file-size: 4096KB
+      max-request-size: 5120KB
   ai:
     # Model endpoints are configured by the user in the app, so none of the provider
     # autoconfigurations may run and demand an API key at startup.

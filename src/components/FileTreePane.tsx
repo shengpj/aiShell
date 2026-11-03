@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { confirmAction } from "../api/confirm";
 import {
   downloadFile,
@@ -6,6 +6,7 @@ import {
   listFiles,
   previewFile,
   renameFile,
+  uploadFile,
   writeTextFile,
   type FileEntry,
   type FileListing,
@@ -125,6 +126,8 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
   const [fileActionError, setFileActionError] = useState<string | null>(null);
   const [entryMenu, setEntryMenu] = useState<FileEntry | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
@@ -277,6 +280,30 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
     setError(null);
     void loadDir(sessionId, cwd);
     void reveal(sessionId, cwd);
+  };
+
+  const chooseUpload = () => {
+    if (sessionId && !uploadBusy) {
+      uploadInputRef.current?.click();
+    }
+  };
+
+  const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !sessionId || uploadBusy) return;
+    if (!(await confirmAction(`上传文件到当前目录？\n\n${cwd}/${file.name}`.replace("//", "/"), "上传远程文件", "上传"))) return;
+    setUploadBusy(true);
+    setFileActionError(null);
+    try {
+      const result = await uploadFile(sessionId, cwd, file);
+      setNotice(`已上传 ${result.path}（${formatSize(result.size)}），操作已记入审计日志。`);
+      refresh();
+    } catch (cause) {
+      setFileActionError(message(cause));
+    } finally {
+      setUploadBusy(false);
+    }
   };
 
   const beginRename = (entry: FileEntry) => {
@@ -544,8 +571,19 @@ export default function FileTreePane({ sessionId, onAskAi }: FileTreePaneProps) 
                   ))}
                 </div>
                 {notice && <span className="file-notice">{notice}</span>}
+                <input ref={uploadInputRef} type="file" hidden onChange={(event) => void handleUpload(event)} />
+                <button
+                  className="mini"
+                  type="button"
+                  title="上传文件到当前目录"
+                  onClick={chooseUpload}
+                  disabled={uploadBusy || loadingCwd}
+                >
+                  {uploadBusy ? "…" : "↑"}
+                </button>
               </div>
               {error && <p className="conn-error file-error">{error}</p>}
+              {fileActionError && !previewPath && <p className="conn-error file-error">{fileActionError}</p>}
               <div className="file-table-wrap" ref={tableRef}>
                 <table className="file-table">
                   <colgroup>

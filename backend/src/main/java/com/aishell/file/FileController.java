@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 /** Bounded file browsing plus explicitly requested, audited text edits and downloads. */
@@ -98,6 +99,29 @@ public class FileController {
     FileService.FileDeleteResult result = files.delete(liveSession(session), path);
     audit.recordFileDelete(session, result.path(), result.type());
     return Map.of("path", result.path(), "type", result.type());
+  }
+
+  @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public Map<String, Object> upload(
+      @RequestParam("session") String session,
+      @RequestParam("directory") String directory,
+      @RequestParam("file") MultipartFile file) {
+    requireSession(session);
+    if (file == null || file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "file is required");
+    }
+    try (java.io.InputStream input = file.getInputStream()) {
+      FileService.FileUploadResult result =
+          files.upload(liveSession(session), directory, file.getOriginalFilename(), input, file.getSize());
+      audit.recordFileUpload(session, result.path(), result.size());
+      return Map.of(
+          "path", result.path(),
+          "name", result.name(),
+          "size", result.size(),
+          "modifiedAt", result.modifiedAt());
+    } catch (java.io.IOException e) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "failed to read upload", e);
+    }
   }
 
   public record FileWriteRequest(

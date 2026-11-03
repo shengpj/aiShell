@@ -65,6 +65,8 @@ public class FileService {
 
   public record FileDeleteResult(String path, String type) {}
 
+  public record FileUploadResult(String path, String name, long size, long modifiedAt) {}
+
   static final int MAX_ENTRIES = 2000;
   static final int TEXT_LIMIT = 256 * 1024;
   static final int IMAGE_LIMIT = 4 * 1024 * 1024;
@@ -255,6 +257,83 @@ public class FileService {
     }
   }
 
+  public FileUploadResult upload(
+      Session session, String directory, String name, InputStream input, long declaredSize) {
+    if (directory == null || directory.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "directory is required");
+    }
+    if (name == null || name.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "file name is required");
+    }
+    if (name.equals(".") || name.equals("..") || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf('\0') >= 0) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "file name must be a single path segment");
+    }
+    if (input == null) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "file is required");
+    }
+    if (declaredSize > IMAGE_LIMIT) {
+      throw new ResponseStatusException(
+          HttpStatus.PAYLOAD_TOO_LARGE, "upload is limited to " + IMAGE_LIMIT + " bytes");
+    }
+    String parent = directory.trim();
+    ChannelSftp channel = open(session);
+    String target = null;
+    String temporary = null;
+    try {
+      String canonicalParent = channel.realpath(parent);
+      SftpATTRS parentAttrs = channel.lstat(canonicalParent);
+      if (!parentAttrs.isDir() || parentAttrs.isLink()) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "target directory is not a directory");
+      }
+      target = childPath(canonicalParent, name);
+      temporary = target + ".aishell-upload-" + UUID.randomUUID();
+      try {
+        channel.lstat(target);
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "target path already exists: " + target);
+      } catch (SftpException e) {
+        if (e.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) {
+          throw e;
+        }
+      }
+      byte[] bytes;
+      try {
+        bytes = read(input, IMAGE_LIMIT + 1);
+      } catch (IOException e) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "failed to read upload: " + e.getMessage(), e);
+      }
+      if (bytes.length > IMAGE_LIMIT) {
+        throw new ResponseStatusException(
+            HttpStatus.PAYLOAD_TOO_LARGE, "upload is limited to " + IMAGE_LIMIT + " bytes");
+      }
+      channel.put(new ByteArrayInputStream(bytes), temporary, ChannelSftp.OVERWRITE);
+      channel.chmod(0644, temporary);
+      try {
+        channel.lstat(target);
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "target path already exists: " + target);
+      } catch (SftpException e) {
+        if (e.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) {
+          throw e;
+        }
+      }
+      channel.rename(temporary, target);
+      SftpATTRS saved = channel.stat(target);
+      return new FileUploadResult(target, name, saved.getSize(), saved.getMTime());
+    } catch (ResponseStatusException e) {
+      throw e;
+    } catch (SftpException e) {
+      throw failure(e, target == null ? parent : target);
+    } finally {
+      try {
+        if (temporary != null) {
+          channel.rm(temporary);
+        }
+      } catch (SftpException ignored) {
+        // The temporary file is already gone after a successful rename.
+      }
+      channel.disconnect();
+    }
+  }
+
   public FileRenameResult rename(Session session, String from, String to) {
     if (from == null || from.isBlank() || to == null || to.isBlank()) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "source and target paths are required");
@@ -339,15 +418,19 @@ public class FileService {
   private static byte[] read(ChannelSftp channel, String path, int limit)
       throws SftpException, IOException {
     try (InputStream in = channel.get(path)) {
-      ByteArrayOutputStream out = new ByteArrayOutputStream();
-      byte[] buffer = new byte[8192];
-      int read;
-      while (out.size() < limit
-          && (read = in.read(buffer, 0, Math.min(buffer.length, limit - out.size()))) != -1) {
-        out.write(buffer, 0, read);
-      }
-      return out.toByteArray();
+      return read(in, limit);
     }
+  }
+
+  private static byte[] read(InputStream in, int limit) throws IOException {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    byte[] buffer = new byte[8192];
+    int read;
+    while (out.size() < limit
+        && (read = in.read(buffer, 0, Math.min(buffer.length, limit - out.size()))) != -1) {
+      out.write(buffer, 0, read);
+    }
+    return out.toByteArray();
   }
 
   private static boolean containsNul(byte[] bytes) {
