@@ -10,6 +10,7 @@ import ConnectionsPane from "./components/ConnectionsPane";
 import FileTreePane from "./components/FileTreePane";
 import StatusBar from "./components/StatusBar";
 import TerminalPane from "./components/TerminalPane";
+import AuditCenter from "./components/AuditCenter";
 import {
   getBackendHealth,
   getBackendInfo,
@@ -70,6 +71,7 @@ export default function App() {
   const dragRef = useRef<{ side: "left" | "right"; startX: number; start: Layout } | null>(null);
   const [layout, setLayout] = useState(loadLayout);
   const [dragging, setDragging] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -213,6 +215,7 @@ export default function App() {
       <header className="titlebar">
         <span className="brand">AI Shell</span>
         <span className="titlebar-hint">本地 SSH 运维工作台</span>
+        <button className="titlebar-action" type="button" title="打开审计中心" onClick={() => setAuditOpen(true)}>审计</button>
       </header>
 
       {error && <div className="banner">后端不可用：{error}</div>}
@@ -336,6 +339,7 @@ export default function App() {
       </main>
 
       <StatusBar preview={preview} info={info} health={health} />
+      {auditOpen && <AuditCenter onClose={() => setAuditOpen(false)} />}
     </div>
   );
 }

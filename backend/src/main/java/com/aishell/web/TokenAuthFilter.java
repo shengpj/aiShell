@@ -79,6 +79,9 @@ public class TokenAuthFilter extends OncePerRequestFilter {
     if (uri.startsWith("/api/files")) {
       return "files";
     }
+    if (uri.startsWith("/api/audit")) {
+      return "audit";
+    }
     if (uri.startsWith("/api/models")) {
       return "models";
     }

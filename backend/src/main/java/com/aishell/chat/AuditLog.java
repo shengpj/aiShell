@@ -3,6 +3,7 @@ package com.aishell.chat;
 import com.aishell.terminal.AiCommandResult;
 import com.aishell.terminal.UserCommandListener;
 import java.io.IOException;
+import java.io.BufferedReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -13,6 +14,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -134,6 +136,92 @@ public class AuditLog implements UserCommandListener {
     return new History(matches, truncated);
   }
 
+  /** Searches every live and rotated audit file, newest records first. */
+  public AuditPage search(AuditFilter filter) {
+    int page = Math.max(0, filter.page());
+    int size = Math.max(1, Math.min(filter.size(), 200));
+    int keep = Math.min(10_000, (page + 1) * size);
+    List<Map<String, Object>> newest = new ArrayList<>();
+    long total = 0;
+    synchronized (lock) {
+      forEachMatch(filter, entry -> {
+        // A bounded tail keeps paging usable even when the audit directory is large.
+        newest.add(entry);
+        if (newest.size() > keep) {
+          newest.removeFirst();
+        }
+      });
+      total = countMatches(filter);
+    }
+    Collections.reverse(newest);
+    int from = Math.min(page * size, newest.size());
+    int to = Math.min(from + size, newest.size());
+    return new AuditPage(newest.subList(from, to), total, page, size, from + size < total);
+  }
+
+  /** Writes matching records without materializing the complete audit history. */
+  public void writeMatches(AuditFilter filter, Consumer<Map<String, Object>> consumer) {
+    synchronized (lock) {
+      forEachMatch(filter, consumer);
+    }
+  }
+
+  private long countMatches(AuditFilter filter) {
+    final long[] count = {0};
+    forEachMatch(filter, ignored -> count[0]++);
+    return count[0];
+  }
+
+  private void forEachMatch(AuditFilter filter, Consumer<Map<String, Object>> consumer) {
+    for (int index = maxFiles; index >= 0; index--) {
+      Path candidate = index == 0 ? file : sibling(index);
+      if (!Files.isRegularFile(candidate)) {
+        continue;
+      }
+      try (BufferedReader reader = Files.newBufferedReader(candidate)) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          if (line.isBlank()) continue;
+          try {
+            Map<?, ?> parsed = json.readValue(line, Map.class);
+            if (!matches(parsed, filter)) continue;
+            Map<String, Object> copy = new LinkedHashMap<>();
+            parsed.forEach((key, value) -> copy.put(String.valueOf(key), value));
+            copy.put("source", candidate.getFileName().toString());
+            consumer.accept(copy);
+          } catch (RuntimeException e) {
+            log.debug("ignoring malformed audit line in {}", candidate);
+          }
+        }
+      } catch (IOException e) {
+        log.debug("failed to read audit records from {}", candidate, e);
+      }
+    }
+  }
+
+  private static boolean matches(Map<?, ?> entry, AuditFilter filter) {
+    String at = text(entry, "at");
+    if (filter.from() != null && (at.isBlank() || Instant.parse(at).isBefore(filter.from()))) return false;
+    if (filter.to() != null && (at.isBlank() || Instant.parse(at).isAfter(filter.to()))) return false;
+    if (notBlank(filter.session()) && !filter.session().equals(text(entry, "session"))) return false;
+    if (notBlank(filter.initiator()) && !filter.initiator().equals(text(entry, "initiator"))) return false;
+    if (notBlank(filter.kind()) && !filter.kind().equals(text(entry, "kind"))) return false;
+    if (notBlank(filter.status()) && !filter.status().equals(text(entry, "status"))) return false;
+    if (notBlank(filter.query())) {
+      String needle = filter.query().trim().toLowerCase();
+      String haystack = entry.values().stream().map(String::valueOf).reduce("", (a, b) -> a + " " + b).toLowerCase();
+      if (!haystack.contains(needle)) return false;
+    }
+    return true;
+  }
+
+  private static String text(Map<?, ?> entry, String key) {
+    Object value = entry.get(key);
+    return value == null ? "" : String.valueOf(value);
+  }
+
+  private static boolean notBlank(String value) { return value != null && !value.isBlank(); }
+
   /** A command the user typed in a shell with the audit hook (ADR 0010). */
   @Override
   public void onUserCommand(String session, String command, int exitCode, String cwd) {
@@ -203,4 +291,11 @@ public class AuditLog implements UserCommandListener {
   }
 
   public record History(List<Map<String, Object>> entries, boolean truncated) {}
+
+  public record AuditFilter(
+      Instant from, Instant to, String session, String initiator, String kind, String status,
+      String query, int page, int size) {}
+
+  public record AuditPage(
+      List<Map<String, Object>> entries, long total, int page, int size, boolean hasMore) {}
 }

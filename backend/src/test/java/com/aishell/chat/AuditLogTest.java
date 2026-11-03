@@ -6,6 +6,8 @@ import com.aishell.terminal.AiCommandResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.time.Instant;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.JsonNode;
@@ -85,5 +87,34 @@ class AuditLogTest {
     assertThat(result.entries()).hasSize(1);
     assertThat(result.entries().getFirst()).containsEntry("command", "false");
     assertThat(result.entries().getFirst()).containsEntry("initiator", "ai");
+  }
+
+  @Test
+  void searchesAllEventKindsAcrossRotatedFilesNewestFirst() throws Exception {
+    AuditLog log = new AuditLog(new ObjectMapper(), dir.toString(), 300, 2);
+    log.onUserCommand("s1", "pwd", 0, "/root");
+    log.recordFileDownload("s1", "/tmp/a.txt", 12);
+    log.recordCommand("s1", "false", new AiCommandResult(AiCommandResult.Status.COMPLETED, 1, "bad", "failed", 4));
+
+    AuditLog.AuditPage page = log.search(new AuditLog.AuditFilter(
+        Instant.now().minusSeconds(60), Instant.now().plusSeconds(60), "s1", null, null, null, null, 0, 10));
+
+    assertThat(page.total()).isEqualTo(3);
+    assertThat(page.entries()).extracting(entry -> entry.get("kind"))
+        .containsExactly("command", "file_download", "command");
+    assertThat(page.entries().get(0)).containsEntry("source", "audit.jsonl");
+  }
+
+  @Test
+  void searchFiltersStatusAndKeyword() throws Exception {
+    AuditLog log = new AuditLog(new ObjectMapper(), dir.toString());
+    log.recordCommand("s1", "echo ok", new AiCommandResult(AiCommandResult.Status.COMPLETED, 0, "healthy", null, 1));
+    log.recordCommand("s1", "false", new AiCommandResult(AiCommandResult.Status.COMPLETED, 1, "failed", "failed", 1));
+
+    AuditLog.AuditPage page = log.search(new AuditLog.AuditFilter(
+        null, null, "s1", "ai", "command", "completed", "false", 0, 10));
+
+    assertThat(page.total()).isEqualTo(1);
+    assertThat(page.entries().getFirst()).containsEntry("command", "false");
   }
 }
