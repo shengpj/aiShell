@@ -10,6 +10,10 @@ export interface CustomRunbookInput {
   title: string; summary: string; category: string; fields: CustomRunbookField[];
   steps: string[]; success: string[]; version?: number;
 }
+export interface RunbookRevision {
+  runbookId: string; version: number; title: string; summary: string; category: string;
+  fields: CustomRunbookField[]; steps: string[]; success: string[]; createdAt: string;
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const info = await getBackendInfo();
@@ -34,4 +38,13 @@ export function updateCustomRunbook(id: string, input: CustomRunbookInput): Prom
 }
 export function deleteCustomRunbook(id: string): Promise<void> {
   return request(`/api/runbooks/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+export function listRunbookRevisions(id: string): Promise<RunbookRevision[]> {
+  return request(`/api/runbooks/${encodeURIComponent(id)}/revisions`);
+}
+export function rollbackRunbook(id: string, targetVersion: number, expectedVersion: number): Promise<CustomRunbook> {
+  return request(`/api/runbooks/${encodeURIComponent(id)}/rollback`, {
+    method: "POST",
+    body: JSON.stringify({ targetVersion, expectedVersion }),
+  });
 }

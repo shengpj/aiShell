@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { confirmDestructive } from "../api/confirm";
-import { createCustomRunbook, deleteCustomRunbook, listCustomRunbooks, updateCustomRunbook, type CustomRunbook } from "../api/runbooks";
+import { createCustomRunbook, deleteCustomRunbook, listCustomRunbooks, listRunbookRevisions, rollbackRunbook, updateCustomRunbook, type CustomRunbook, type RunbookRevision } from "../api/runbooks";
 import { buildRunbookPrompt, RUNBOOKS, type Runbook } from "../runbooks";
 
 interface RunbookPickerProps {
@@ -15,6 +15,8 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<CustomRunbook>({ id: "", title: "", summary: "", category: "自定义", fields: [], steps: [""], success: [""], version: 1, createdAt: "", updatedAt: "" });
   const [error, setError] = useState<string | null>(null);
+  const [revisions, setRevisions] = useState<RunbookRevision[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const all = useMemo<Runbook[]>(() => [...RUNBOOKS, ...custom.map((item) => item as Runbook)], [custom]);
   const selected = useMemo(
     () => all.find((runbook) => runbook.id === selectedId) ?? all[0],
@@ -33,6 +35,15 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
 
   useEffect(() => { void listCustomRunbooks().then(setCustom).catch(() => undefined); }, []);
 
+  useEffect(() => {
+    if (!custom.some((item) => item.id === selectedId)) {
+      setRevisions([]);
+      setHistoryOpen(false);
+      return;
+    }
+    void listRunbookRevisions(selectedId).then(setRevisions).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+  }, [custom, selectedId]);
+
   if (!selected) {
     return null;
   }
@@ -50,6 +61,15 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
   const remove = async () => {
     if (!isCustom || !(await confirmDestructive("删除 Runbook「" + selected.title + "」？", "删除 Runbook"))) return;
     try { await deleteCustomRunbook(selected.id); setCustom((current) => current.filter((item) => item.id !== selected.id)); setSelectedId(RUNBOOKS[0]?.id ?? ""); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const restore = async (revision: RunbookRevision) => {
+    if (!isCustom || !(await confirmDestructive("将当前 Runbook 恢复为第 " + revision.version + " 版？当前内容会保留为新版本。", "恢复 Runbook 版本"))) return;
+    try {
+      const saved = await rollbackRunbook(selected.id, revision.version, (selected as CustomRunbook).version);
+      setCustom((current) => current.map((item) => item.id === saved.id ? saved : item));
+      setHistoryOpen(false);
+      setError(null);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
 
   return (
@@ -102,6 +122,21 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
                 <p className="form-hint">参数字段可在步骤中使用 {"{{name}}"}，保存后会在 Runbook 列表中持久化。</p>
                 <div className="form-actions"><button className="connect-button" type="button" disabled={!draft.title.trim() || !draft.summary.trim() || !draft.steps.some(Boolean) || !draft.success.some(Boolean)} onClick={() => void save()}>保存</button><button className="ghost-button" type="button" onClick={() => setEditing(false)}>取消</button></div>
               </>
+            ) : historyOpen && isCustom ? (
+              <>
+                <div><h3>版本历史</h3><p className="form-hint">恢复会创建新的版本，历史记录不会删除。</p></div>
+                <div className="runbook-revisions">
+                  {revisions.map((revision) => (
+                    <div className="runbook-revision" key={revision.version}>
+                      <div><strong>版本 {revision.version}</strong><span className="form-hint">{new Date(revision.createdAt).toLocaleString()}</span></div>
+                      <span className="runbook-revision-title">{revision.title}</span>
+                      <button className="ghost-button" type="button" disabled={revision.version === (selected as CustomRunbook).version} onClick={() => void restore(revision)}>{revision.version === (selected as CustomRunbook).version ? "当前版本" : "恢复"}</button>
+                    </div>
+                  ))}
+                  {revisions.length === 0 && <p className="empty-hint">暂无版本历史</p>}
+                </div>
+                <div className="form-actions"><button className="ghost-button" type="button" onClick={() => setHistoryOpen(false)}>返回</button></div>
+              </>
             ) : (
             <>
             <div>
@@ -145,7 +180,7 @@ export default function RunbookPicker({ onClose, onUse }: RunbookPickerProps) {
               <button className="ghost-button" type="button" onClick={onClose}>
                 取消
               </button>
-              {isCustom && <><button className="ghost-button" type="button" onClick={() => { setDraft(selected as CustomRunbook); setEditing(true); }}>编辑</button><button className="danger-button" type="button" onClick={() => void remove()}>删除</button></>}
+              {isCustom && <><button className="ghost-button" type="button" onClick={() => { setDraft(selected as CustomRunbook); setEditing(true); }}>编辑</button><button className="ghost-button" type="button" onClick={() => setHistoryOpen(true)}>历史</button><button className="danger-button" type="button" onClick={() => void remove()}>删除</button></>}
             </div>
             </>
             )}

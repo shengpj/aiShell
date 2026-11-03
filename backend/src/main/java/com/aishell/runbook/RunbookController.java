@@ -37,6 +37,24 @@ public class RunbookController {
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "runbook not found or version changed"));
   }
 
+  @GetMapping("/{id}/revisions")
+  public List<RunbookStore.Revision> revisions(@PathVariable String id) {
+    if (store.find(id).isEmpty()) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "runbook not found");
+    }
+    return store.revisions(id);
+  }
+
+  @PostMapping("/{id}/rollback")
+  public RunbookStore.Runbook rollback(
+      @PathVariable String id, @RequestBody(required = false) RollbackRequest request) {
+    if (request == null || request.targetVersion() < 1 || request.expectedVersion() < 1) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "targetVersion and expectedVersion are required");
+    }
+    return store.rollback(id, request.targetVersion(), request.expectedVersion())
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "runbook not found, revision missing, or version changed"));
+  }
+
   @DeleteMapping("/{id}")
   public void delete(@PathVariable String id) {
     if (!store.delete(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "runbook not found");
@@ -61,4 +79,6 @@ public class RunbookController {
 
   public record RunbookRequest(String title, String summary, String category,
       List<RunbookStore.Field> fields, List<String> steps, List<String> success, int version) {}
+
+  public record RollbackRequest(int targetVersion, int expectedVersion) {}
 }
